@@ -6,11 +6,11 @@ Local `AF_UNIX` / `SOCK_STREAM` connections carry consecutive frames. Each frame
 |---|---:|---|---|
 | 0 | 4 | magic | `0x45525043` (`ERPC`) |
 | 4 | 2 | version | `1` |
-| 6 | 2 | type | `1` socket request, `2` socket response, `3` error, `4` SHM request, `5` SHM completion, `6` register, `7` registration ACK, `8` pool request, `9` pool completion |
+| 6 | 2 | type | `1` socket request, `2` socket response, `3` error, `4` SHM request, `5` SHM completion, `6` register, `7` registration ACK, `8` pool request, `9` pool completion, `10` timed socket response, `11` timed SHM response |
 | 8 | 8 | request_id | Nonzero unsigned 64-bit ID, echoed in response |
-| 16 | 4 | payload_size | 0 through 8,388,608 bytes |
+| 16 | 4 | payload_size | 0 through 8,388,608 bytes; type 10 allows 24 additional trace bytes |
 | 20 | 4 | status | `0` OK, `1` invalid request, `2` backend failure, `3` overloaded |
-| 24 | 4 | flags | Operation: `0` noop/echo, `1` compute (`2*x + 1`) |
+| 24 | 4 | flags | Operation: `0` noop/echo, `1` compute (`2*x + 1`); optional `0x100` timing flag on inference |
 
 Requests must have OK status. Successful responses preserve operation, ID, and element count. Tensor payloads must be a multiple of four bytes; an empty tensor is valid. `noop` returns the original values, so it still includes the full response payload. Non-finite float bit patterns are representable; CLI-generated workloads use finite, exactly representable values and validate results within absolute tolerance `1e-6`.
 
@@ -56,3 +56,11 @@ A type-8 request uses the usual operation flags, OK status, and a nonzero ID, wi
 The reader marks an accepted slot busy before enqueueing. Busy slots, unknown IDs, stale generations, and invalid counts receive INVALID_REQUEST. Rejection must not release a different running generation. A full execution queue releases the acquired slot before OVERLOADED is sent; that generation remains consumed. The next use must increment it even after an error. Accepted slot ownership lasts through the final output write, before completion is sent. The client must consume output before sending another use of that slot. Same-user clients must obey this ownership contract; metadata checks cannot prevent a malicious mapping mutation.
 
 A successful type-9 response echoes the request ID/operation with OK status. Its exact 48-byte payload starts with the same 24-byte slot reference, then three unsigned big-endian 64-bit timestamps at offsets 24, 32, and 40: queue admission, execution begin, execution end. All use the host's `CLOCK_MONOTONIC` nanoseconds, with `0 < queued <= begin <= end`. Execution includes input/output copies and backend work. The receiver validates slot, generation, and count before reading output. Errors retain type 3 and release the lease only for the corresponding pending ID. Malformed/stale completions fail all pending work and stop reuse on that connection. See [the pool state machine](pipeline.md).
+
+## Optional timing telemetry (v0.5)
+
+Inference requests may set flag `0x100` alongside operation 0/1. Other flag bits are rejected. Registration still requires flags zero. No negotiation/downgrade is implemented: older servers reject the new flag. Ordinary library clients default to timing off; the benchmark defaults on. Responses and errors echo the complete flags. Backends receive the operation with the timing bit removed.
+
+For a timed socket request, success uses type 10: a 24-byte execution trace followed by the usual big-endian float32 output. Total payload is 24 through `8 MiB + 24`, aligned to four bytes; the tensor cap stays 8 MiB. For a timed per-request SHM call, success uses type 11 with exactly the 24-byte trace, while tensor output remains mapped. Type 9 already contains timing and retains its existing 48-byte encoding for pooled calls. Timing off keeps all previous response encodings.
+
+The trace is three unsigned big-endian 64-bit values: `queued_ns`, `execute_begin_ns`, `execute_end_ns`. All use host `CLOCK_MONOTONIC`, with `0 < queued <= begin <= end`. Admission is after validation/mapping; execution includes decoding/input copying, backend work/delay, and output encoding/copying. Socket writing and trace-prefix insertion occur afterward. The client validates lengths, type, flags, and trace order before reading output or settling the future. A malformed trace fails all pending work. Timed response size limits are checked before allocation, including maximum-tensor responses. [Benchmark methodology](benchmarks.md) defines the counters and cold/steady-state boundaries.

@@ -130,3 +130,6 @@ def plot(directory, summaries):
     fig.savefig(directory/"startup.svg")
     fig.savefig(directory/"startup.png",dpi=120)
     plt.close(fig)
+    # Matplotlib paths contain trailing spaces; keep exported text clean in Git.
+    for path in directory.glob("*.svg"):
+        path.write_text("\n".join(line.rstrip() for line in path.read_text().splitlines())+"\n")

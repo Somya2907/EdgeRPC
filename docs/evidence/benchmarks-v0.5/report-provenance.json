@@ -1,0 +1,8 @@
+{
+  "measurement_metadata_sha256": "f854ce6c47696de6bf3519545f126c3ae7a09bc638bde738814a4550c197e73e",
+  "report_source_sha256": {
+    "report.py": "c535cb397f6582cbb3ac329c094bbe2c67f97bb103147a833de28f4e74fd62ff",
+    "plot_results.py": "c463fd33541ba7c6e265c2aa3b70eb79a9a4596b6d6240142ba25137498ac543"
+  },
+  "plots": true
+}

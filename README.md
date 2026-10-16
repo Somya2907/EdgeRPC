@@ -4,7 +4,7 @@ A C++17 client/server runtime for studying inference RPC across processes. A cli
 
 This is a software prototype inspired by heterogeneous inference communication. It does **not** implement Qualcomm FastRPC, execute on an NPU, or measure CPU–NPU transfers.
 
-## Current milestone: reusable buffers and double buffering
+## Current milestone: measured transport comparisons
 
 - Reusable `edgerpc` library, server, demo client, and benchmark.
 - Thread-safe `infer_async()` submissions, futures, request-ID matching, and shared sync/async transport.
@@ -17,8 +17,9 @@ This is a software prototype inspired by heterogeneous inference communication. 
 - Safe socket-path cleanup, stale-socket recovery, and SIGINT/SIGTERM shutdown.
 - Correctness and failure tests that run separate server/client processes.
 - Warm-up-separated measurements, per-request CSV, p50/p95/p99, and throughput.
+- Optional stage telemetry across transports, measured socket bytes, repeated-trial reports and exported charts.
 
-Synchronous RPC, async execution, shared-memory transport, and buffer reuse/double buffering are implemented. Comparative performance reports and target-platform validation remain in [the completion roadmap](docs/completion-plan.md). The server serves one active client connection at a time and supports multiple outstanding requests within it. Client submissions may come from multiple threads.
+Synchronous RPC, async execution, shared memory, reusable buffers, and repeated benchmark comparisons are implemented. Target-platform validation and release work remain in [the completion roadmap](docs/completion-plan.md). The server serves one active client connection at a time and supports multiple outstanding requests within it. Client submissions may come from multiple threads.
 
 ## Build and test
 
@@ -118,7 +119,15 @@ REQUESTS=5000 WARMUP=200 SIZES_KIB="4 64 1024 8192" ./scripts/run_benchmarks.sh
 ./scripts/run_pipeline_benchmarks.sh  # 1/2/4 slots with synthetic preparation/execution
 ```
 
-The baseline script runs socket sync; the pipeline script compares slot counts at fixed concurrency and records overlap intervals. The binary supports all four modes. Results go in ignored `results/`; [the recorded phase-3 evidence](docs/pipeline-evidence.md) retains one demonstration in the repository. Run repeated trials before drawing performance conclusions. Compare transports at equal concurrency, tensor size, workload, delay, and worker count. Per-request SHM timings include fresh allocation/map setup; pool initialization is reported separately. [Benchmark methodology](docs/benchmarks.md) explains timer boundaries and limitations.
+For repeated comparisons across all modes, with five trials, controlled settings, variability, failure retention and charts:
+
+```sh
+python3 -m pip install -r benchmarks/requirements.txt  # Optional chart dependencies
+python3 scripts/run_comparisons.py
+python3 scripts/run_comparisons.py --smoke  # Short functional check only
+```
+
+The baseline shell script runs socket sync; the pipeline shell script records synthetic overlap intervals. The comparison runner owns its servers and randomizes trial order. Results go in ignored `results/`; [retained measurements and findings](docs/benchmark-results.md) include raw samples, metadata, summaries and SVG/PNG charts. Benchmark timing defaults on (`--instrumentation off` provides a control); ordinary library clients default off. Per-request SHM includes fresh allocation/map setup; pool initialization is reported separately. [Methodology](docs/benchmarks.md) defines timer boundaries, actual socket counters, matching controls and limitations.
 
 ## Reliability and architecture
 
@@ -131,7 +140,7 @@ future <- ID matching <- receiver <- Unix socket <- worker(s): 2*x+1 / noop
 
 See [the wire protocol](docs/protocol.md), [shared-memory ownership](docs/shared-memory.md), and [architecture and next steps](docs/architecture.md).
 
-Linux CTest includes nine protocol/backend/metrics groups, 27 async/concurrency groups, six buffer/descriptor groups, four pool/wire/state groups, and 37 Python integration tests. Coverage includes zero/max tensors, independent mappings, invalid metadata/permissions, reversed mixed-mode replies, allocation and registration failures, pool generations/ownership, overload cleanup, disconnects, server crash/restart, and 1,000-request socket/SHM/pool stress benchmarks. The allocation-failure injection uses a Linux-specific resource limit; other groups are shared with macOS. Checks remain active in Release builds.
+Linux CTest includes 11 protocol/backend/metrics groups, 30 async/concurrency groups, six buffer/descriptor groups, four pool/wire/state groups, 39 process integration tests, and 15 benchmark-analysis tests. Coverage includes zero/max tensors, independent mappings, invalid metadata/permissions, reversed replies, allocation/registration failures, pool ownership, overload, disconnect/crash recovery, 1,000-request stress runs, timed maximum responses, actual/partial byte counts, configuration propagation, and invalid/incomplete report rejection. The allocation-failure injection is Linux-specific; other groups are shared with macOS. Checks remain active in Release builds.
 
 For a sanitizer build:
 
