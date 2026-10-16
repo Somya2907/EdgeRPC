@@ -3,8 +3,18 @@
 #include <algorithm>
 #include <cmath>
 #include <stdexcept>
+#include <cerrno>
+#include <ctime>
+#include <system_error>
 
 namespace edgerpc {
+
+std::uint64_t monotonic_ns() {
+    timespec time{};
+    if (::clock_gettime(CLOCK_MONOTONIC, &time) != 0)
+        throw std::system_error(errno, std::generic_category(), "clock_gettime");
+    return static_cast<std::uint64_t>(time.tv_sec) * 1000000000ULL + time.tv_nsec;
+}
 
 LatencySummary summarize_latencies(std::vector<double> samples) {
     if (samples.empty()) throw std::invalid_argument("cannot summarize zero requests");

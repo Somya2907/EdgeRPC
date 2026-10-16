@@ -19,12 +19,19 @@ std::uint64_t get(const std::uint8_t*& in, unsigned width) {
 void validate(const Header& header) {
     if (header.type != MessageType::Request && header.type != MessageType::Response &&
         header.type != MessageType::Error && header.type != MessageType::ShmRequest &&
-        header.type != MessageType::ShmResponse) throw ProtocolError("unknown message type");
+        header.type != MessageType::ShmResponse && header.type != MessageType::RegisterBuffer &&
+        header.type != MessageType::RegisterAck && header.type != MessageType::PooledRequest &&
+        header.type != MessageType::PooledResponse) throw ProtocolError("unknown message type");
     if (header.payload_size > kMaxPayloadBytes) throw ProtocolError("payload exceeds 8 MiB limit");
     if (header.type == MessageType::ShmRequest && header.payload_size != kSharedDescriptorBytes)
         throw ProtocolError("SHM request must contain one descriptor");
     if (header.type == MessageType::ShmResponse && header.payload_size != 0)
         throw ProtocolError("SHM completion must have no payload");
+    if ((header.type == MessageType::RegisterBuffer && header.payload_size != 74) ||
+        (header.type == MessageType::RegisterAck && header.payload_size != 4) ||
+        (header.type == MessageType::PooledRequest && header.payload_size != 24) ||
+        (header.type == MessageType::PooledResponse && header.payload_size != 48))
+        throw ProtocolError("invalid registered-buffer control length");
 }
 
 } // namespace
@@ -138,6 +145,84 @@ SharedDescriptor decode_shared_descriptor(const std::vector<std::uint8_t>& bytes
     descriptor.name.assign(reinterpret_cast<const char*>(in), kSharedNameBytes);
     validate_shared_descriptor(descriptor);
     return descriptor;
+}
+
+std::vector<std::uint8_t> encode_slot_id(std::uint32_t slot) {
+    if (slot < 1 || slot > 4) throw ProtocolError("slot ID must be 1..4");
+    std::vector<std::uint8_t> bytes(4);
+    auto* out = bytes.data();
+    put(out, slot, 4);
+    return bytes;
+}
+
+std::uint32_t decode_slot_id(const std::vector<std::uint8_t>& bytes) {
+    if (bytes.size() != 4) throw ProtocolError("invalid slot ID length");
+    const auto* in = bytes.data();
+    const auto slot = static_cast<std::uint32_t>(get(in, 4));
+    if (slot < 1 || slot > 4) throw ProtocolError("slot ID must be 1..4");
+    return slot;
+}
+
+std::vector<std::uint8_t> encode_registration(const BufferRegistration& registration) {
+    auto bytes = encode_slot_id(registration.slot);
+    const auto descriptor = encode_shared_descriptor(registration.descriptor);
+    bytes.insert(bytes.end(), descriptor.begin(), descriptor.end());
+    return bytes;
+}
+
+BufferRegistration decode_registration(const std::vector<std::uint8_t>& bytes) {
+    if (bytes.size() != 74) throw ProtocolError("invalid buffer registration length");
+    return {decode_slot_id({bytes.begin(), bytes.begin() + 4}),
+            decode_shared_descriptor({bytes.begin() + 4, bytes.end()})};
+}
+
+std::vector<std::uint8_t> encode_slot_reference(const SlotReference& reference) {
+    if (reference.slot < 1 || reference.slot > 4 || reference.elements > kMaxElements || reference.generation == 0)
+        throw ProtocolError("invalid slot reference");
+    std::vector<std::uint8_t> bytes(24);
+    auto* out = bytes.data();
+    put(out, reference.slot, 4);
+    put(out, reference.elements, 4);
+    put(out, reference.generation, 8);
+    put(out, 0, 8);
+    return bytes;
+}
+
+SlotReference decode_slot_reference(const std::vector<std::uint8_t>& bytes) {
+    if (bytes.size() != 24) throw ProtocolError("invalid slot reference length");
+    const auto* in = bytes.data();
+    SlotReference reference;
+    reference.slot = static_cast<std::uint32_t>(get(in, 4));
+    reference.elements = static_cast<std::uint32_t>(get(in, 4));
+    reference.generation = get(in, 8);
+    if (get(in, 8) != 0 || reference.slot < 1 || reference.slot > 4 ||
+        reference.elements > kMaxElements || reference.generation == 0) throw ProtocolError("invalid slot reference");
+    return reference;
+}
+
+std::vector<std::uint8_t> encode_pool_completion(const PoolCompletion& completion) {
+    if (completion.queued_ns == 0 || completion.execute_begin_ns < completion.queued_ns ||
+        completion.execute_end_ns < completion.execute_begin_ns) throw ProtocolError("invalid pool stage timestamps");
+    auto bytes = encode_slot_reference(completion.reference);
+    bytes.resize(48);
+    auto* out = bytes.data() + 24;
+    put(out, completion.queued_ns, 8);
+    put(out, completion.execute_begin_ns, 8);
+    put(out, completion.execute_end_ns, 8);
+    return bytes;
+}
+
+PoolCompletion decode_pool_completion(const std::vector<std::uint8_t>& bytes) {
+    if (bytes.size() != 48) throw ProtocolError("invalid pool completion length");
+    PoolCompletion completion;
+    completion.reference = decode_slot_reference({bytes.begin(), bytes.begin() + 24});
+    const auto* in = bytes.data() + 24;
+    completion.queued_ns = get(in, 8);
+    completion.execute_begin_ns = get(in, 8);
+    completion.execute_end_ns = get(in, 8);
+    if (completion.queued_ns == 0 || completion.execute_begin_ns < completion.queued_ns ||
+        completion.execute_end_ns < completion.execute_begin_ns) throw ProtocolError("invalid pool stage timestamps");
+    return completion;
 }
 
 } // namespace edgerpc

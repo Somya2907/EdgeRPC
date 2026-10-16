@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(EdgeRPC VERSION 0.3.0 LANGUAGES CXX)
+project(EdgeRPC VERSION 0.4.0 LANGUAGES CXX)
 
 if(NOT UNIX)
     message(FATAL_ERROR "EdgeRPC requires POSIX Unix domain sockets (macOS or Linux).")
@@ -18,6 +18,7 @@ add_library(edgerpc
     src/server.cpp
     src/thread_pool.cpp
     src/shared_buffer_posix.cpp
+    src/buffer_pool.cpp
     src/mock_executor.cpp
     src/metrics.cpp)
 target_include_directories(edgerpc PUBLIC include)
@@ -51,6 +52,11 @@ if(BUILD_TESTING)
     target_link_libraries(test_shared_memory PRIVATE edgerpc)
     target_compile_options(test_shared_memory PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME shared_memory COMMAND test_shared_memory)
+    add_executable(test_buffer_pool tests/test_buffer_pool.cpp)
+    target_link_libraries(test_buffer_pool PRIVATE edgerpc)
+    target_compile_options(test_buffer_pool PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME buffer_pool COMMAND test_buffer_pool)
+    set_tests_properties(buffer_pool PROPERTIES TIMEOUT 20)
     find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
     add_test(NAME integration COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_integration.py
