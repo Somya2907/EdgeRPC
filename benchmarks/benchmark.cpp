@@ -15,14 +15,15 @@ int main(int argc, char** argv) {
             {"--socket", "--mode", "--size-kib", "--inflight", "--requests", "--warmup",
              "--csv", "--workers", "--workload", "--timeout-ms"}, {"--help"});
         if (args.has("--help")) {
-            std::cout << "Usage: edgerpc_benchmark [--socket PATH] [--mode socket-sync|socket-async] "
+            std::cout << "Usage: edgerpc_benchmark [--socket PATH] [--mode socket-sync|socket-async|shm-async] "
                          "[--size-kib 64] [--inflight 1] [--workers 1] [--requests 1000] [--warmup 100] "
                          "[--workload compute|noop] [--csv FILE] [--timeout-ms 5000]\n";
             return 0;
         }
         const auto mode = args.get("--mode", "socket-sync");
-        if (mode != "socket-sync" && mode != "socket-async")
-            throw std::invalid_argument("--mode must be socket-sync or socket-async");
+        if (mode != "socket-sync" && mode != "socket-async" && mode != "shm-async")
+            throw std::invalid_argument("--mode must be socket-sync, socket-async, or shm-async");
+        const auto transport = mode == "shm-async" ? edgerpc::TensorTransport::SharedMemory : edgerpc::TensorTransport::Socket;
         const auto inflight = args.number("--inflight", 1, 1, mode == "socket-sync" ? 1 : 1024);
         const auto workers = args.number("--workers", 1, 1, 16);
         const auto size_kib = args.number("--size-kib", 64, 0, edgerpc::kMaxPayloadBytes / 1024);
@@ -69,7 +70,7 @@ int main(int argc, char** argv) {
                 while (submitted < count || !window.empty()) {
                     while (submitted < count && window.size() < inflight) {
                         const auto start = Clock::now();
-                        window.push_back({start, client.infer_async(input, operation)});
+                        window.push_back({start, client.infer_async(input, operation, transport)});
                         ++submitted;
                     }
                     auto flight = std::move(window.front());

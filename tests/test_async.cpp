@@ -1,5 +1,6 @@
 #include "edgerpc/client.hpp"
 #include "edgerpc/thread_pool.hpp"
+#include "edgerpc/shared_buffer.hpp"
 
 #include <array>
 #include <algorithm>
@@ -8,10 +9,16 @@
 #include <functional>
 #include <iostream>
 #include <poll.h>
+#include <optional>
 #include <set>
+#include <system_error>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
+#ifdef __linux__
+#include <csignal>
+#include <sys/resource.h>
+#endif
 
 namespace {
 using namespace std::chrono_literals;
@@ -53,9 +60,22 @@ edgerpc::Frame request(int fd) {
 void reply(int fd, const edgerpc::Frame& request) {
     auto response = request;
     response.header.type = edgerpc::MessageType::Response;
-    auto values = edgerpc::decode_tensor(request.payload);
+    std::optional<edgerpc::SharedBuffer> shared;
+    edgerpc::SharedDescriptor descriptor;
+    std::vector<float> values;
+    if (request.header.type == edgerpc::MessageType::ShmRequest) {
+        descriptor = edgerpc::decode_shared_descriptor(request.payload);
+        shared.emplace(edgerpc::SharedBuffer::open(descriptor.name, descriptor.region_bytes));
+        shared->unlink_name();
+        values = shared->read_tensor(descriptor.input_offset, descriptor.elements);
+    } else values = edgerpc::decode_tensor(request.payload);
     if (request.header.flags == 1) for (auto& value : values) value = value * 2.0f + 1.0f;
-    response.payload = edgerpc::encode_tensor(values);
+    if (shared) {
+        shared->write_tensor(descriptor.output_offset, values);
+        response.header.type = edgerpc::MessageType::ShmResponse;
+        response.header.payload_size = 0;
+        response.payload.clear();
+    } else response.payload = edgerpc::encode_tensor(values);
     edgerpc::send_frame(fd, response, 2s);
 }
 
@@ -78,15 +98,16 @@ template<class Peer, class Client> void with_peer(Peer serve, Client exercise) {
     if (client_error) std::rethrow_exception(client_error);
 }
 
-void reversed_responses() {
+void check_reversed_responses(edgerpc::TensorTransport transport, bool mixed = false) {
     with_peer([](int fd) {
         std::vector<edgerpc::Frame> frames;
         for (int i = 0; i < 32; ++i) frames.push_back(request(fd));
         for (auto i = frames.rbegin(); i != frames.rend(); ++i) reply(fd, *i);
-    }, [](const std::string& path) {
+    }, [transport, mixed](const std::string& path) {
         edgerpc::EdgeRpcClient client(path);
         std::vector<std::future<edgerpc::Response>> futures;
-        for (int i = 0; i < 32; ++i) futures.push_back(client.infer_async({static_cast<float>(i)}));
+        for (int i = 0; i < 32; ++i) futures.push_back(client.infer_async({static_cast<float>(i)},
+            edgerpc::Operation::Compute, mixed && i % 2 ? edgerpc::TensorTransport::Socket : transport));
         std::set<std::uint64_t> ids;
         std::vector<std::chrono::steady_clock::time_point> completions;
         for (int i = 0; i < 32; ++i) {
@@ -102,6 +123,84 @@ void reversed_responses() {
               "completion timestamps must reflect decode order, not future observation order");
     });
 }
+
+void reversed_responses() { check_reversed_responses(edgerpc::TensorTransport::Socket); }
+void reversed_shared_responses() { check_reversed_responses(edgerpc::TensorTransport::SharedMemory); }
+void mixed_transport_responses() { check_reversed_responses(edgerpc::TensorTransport::SharedMemory, true); }
+
+void shared_cleanup(bool explicit_close) {
+    std::vector<edgerpc::SharedDescriptor> regions;
+    std::promise<void> received;
+    auto all_received = received.get_future();
+    with_peer([&](int fd) {
+        for (int i = 0; i < 8; ++i) regions.push_back(edgerpc::decode_shared_descriptor(request(fd).payload));
+        received.set_value();
+        if (explicit_close) {
+            edgerpc::Frame frame;
+            check(!edgerpc::receive_frame(fd, frame, 2s), "close must interrupt the connection");
+        }
+    }, [&](const std::string& path) {
+        edgerpc::EdgeRpcClient client(path);
+        std::vector<std::future<edgerpc::Response>> futures;
+        for (int i = 0; i < 8; ++i) futures.push_back(client.infer_async({1}, edgerpc::Operation::Compute,
+            edgerpc::TensorTransport::SharedMemory));
+        ready(all_received);
+        all_received.get();
+        if (explicit_close) client.close();
+        for (auto& future : futures) { ready(future); must_fail([&] { future.get(); }); }
+    });
+    for (const auto& region : regions)
+        must_fail([&] { edgerpc::SharedBuffer::open(region.name, region.region_bytes); });
+}
+
+void shared_close_cleanup() { shared_cleanup(true); }
+void shared_disconnect_cleanup() { shared_cleanup(false); }
+
+#ifdef __linux__
+void failed_shared_preparation_preserves_connection() {
+    with_peer([](int fd) {
+        reply(fd, request(fd)); // Only the later socket request should reach the peer.
+        reply(fd, request(fd));
+    }, [](const std::string& path) {
+        edgerpc::EdgeRpcClient client(path, 100ms);
+        {
+            // Force an isolated allocation error without consuming shared-memory capacity.
+            // Socket I/O is unaffected. Restore the process limit and signal handler on all exits.
+            struct FileLimit {
+                rlimit original{};
+                struct sigaction original_signal{};
+                FileLimit() {
+                    check(::getrlimit(RLIMIT_FSIZE, &original) == 0, "getrlimit failed");
+                    struct sigaction ignore{};
+                    ignore.sa_handler = SIG_IGN;
+                    ::sigemptyset(&ignore.sa_mask);
+                    check(::sigaction(SIGXFSZ, &ignore, &original_signal) == 0, "sigaction failed");
+                    rlimit limited = original;
+                    limited.rlim_cur = 0;
+                    if (::setrlimit(RLIMIT_FSIZE, &limited) != 0) {
+                        ::sigaction(SIGXFSZ, &original_signal, nullptr);
+                        throw std::runtime_error("setrlimit failed");
+                    }
+                }
+                ~FileLimit() {
+                    ::setrlimit(RLIMIT_FSIZE, &original);
+                    ::sigaction(SIGXFSZ, &original_signal, nullptr);
+                }
+            } limit;
+            auto failed = client.infer_async({1}, edgerpc::Operation::Compute, edgerpc::TensorTransport::SharedMemory);
+            ready(failed);
+            bool rejected = false;
+            try { failed.get(); }
+            catch (const std::system_error& error) { rejected = error.code().value() == EFBIG; }
+            check(rejected, "allocation failure was not reported to its future");
+        }
+        std::this_thread::sleep_for(200ms); // An unsent request must not start the receive timeout.
+        check(client.infer_sync({3}).output == std::vector<float>{7}, "preparation error closed socket transport");
+        check(client.infer_sync({4}, edgerpc::Operation::Compute, edgerpc::TensorTransport::SharedMemory).output ==
+              std::vector<float>{9}, "preparation failure did not reclaim pending capacity");
+    });
+}
+#endif
 
 void client_backpressure() {
     std::promise<void> release;
@@ -334,6 +433,11 @@ void worker_survives_task_exception() {
 int main() {
     const std::vector<std::pair<const char*, std::function<void()>>> cases{
         {"reversed responses", reversed_responses}, {"client backpressure", client_backpressure},
+        {"reversed shared responses", reversed_shared_responses}, {"mixed transport responses", mixed_transport_responses},
+        {"shared close cleanup", shared_close_cleanup}, {"shared disconnect cleanup", shared_disconnect_cleanup},
+#ifdef __linux__
+        {"failed SHM preparation preserves connection", failed_shared_preparation_preserves_connection},
+#endif
         {"disconnect settles all", disconnect_settles_all}, {"close settles queued work", close_settles_queued_work},
         {"destruction settles futures", destruction_settles_futures}, {"timeout settles all", timeout_settles_all},
         {"protocol failure settles all", protocol_failure_settles_all}, {"remote errors isolated", remote_error_isolated},

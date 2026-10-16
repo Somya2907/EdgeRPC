@@ -30,8 +30,10 @@ public:
     ~EdgeRpcClient();
     EdgeRpcClient(const EdgeRpcClient&) = delete;
     EdgeRpcClient& operator=(const EdgeRpcClient&) = delete;
-    Response infer_sync(const std::vector<float>& input, Operation operation = Operation::Compute);
-    std::future<Response> infer_async(std::vector<float> input, Operation operation = Operation::Compute);
+    Response infer_sync(const std::vector<float>& input, Operation operation = Operation::Compute,
+                        TensorTransport transport = TensorTransport::Socket);
+    std::future<Response> infer_async(std::vector<float> input, Operation operation = Operation::Compute,
+                                     TensorTransport transport = TensorTransport::Socket);
     // Reject new calls, fail pending calls, interrupt I/O, and join owned threads.
     void close();
 private:

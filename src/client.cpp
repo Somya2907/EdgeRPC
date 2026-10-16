@@ -1,5 +1,7 @@
 #include "edgerpc/client.hpp"
+#include "edgerpc/shared_buffer.hpp"
 
+#include <algorithm>
 #include <condition_variable>
 #include <deque>
 #include <limits>
@@ -15,6 +17,10 @@ struct EdgeRpcClient::State {
         std::uint64_t id;
         std::size_t elements;
         Operation operation;
+        TensorTransport transport;
+        bool ready_for_reply = false;
+        std::shared_ptr<SharedBuffer> shared;
+        SharedDescriptor descriptor;
         std::promise<Response> promise;
     };
     struct Submission {
@@ -31,6 +37,7 @@ struct EdgeRpcClient::State {
     bool stopped = false;
     std::exception_ptr failure;
     std::uint64_t next_id = 1;
+    std::size_t reply_count = 0;
     std::deque<Submission> queue;
     std::unordered_map<std::uint64_t, std::shared_ptr<Pending>> pending;
     std::thread sender;
@@ -59,6 +66,7 @@ struct EdgeRpcClient::State {
             stopped = true;
             failure = error;
             pending.swap(abandoned);
+            reply_count = 0;
             queue.clear();
             // Descriptor remains valid until both I/O threads have joined.
             ::shutdown(socket.get(), SHUT_RDWR);
@@ -75,13 +83,16 @@ struct EdgeRpcClient::State {
         socket.reset();
     }
 
-    std::future<Response> submit(std::vector<float> input, Operation operation) {
+    std::future<Response> submit(std::vector<float> input, Operation operation, TensorTransport transport) {
         if (input.size() > kMaxElements) throw ProtocolError("tensor exceeds 8 MiB limit");
         if (operation != Operation::Compute && operation != Operation::Noop)
             throw std::invalid_argument("unsupported operation");
+        if (transport != TensorTransport::Socket && transport != TensorTransport::SharedMemory)
+            throw std::invalid_argument("unsupported tensor transport");
         auto call = std::make_shared<Pending>();
         call->elements = input.size();
         call->operation = operation;
+        call->transport = transport;
         auto future = call->promise.get_future();
         {
             std::lock_guard<std::mutex> lock(mutex);
@@ -102,6 +113,13 @@ struct EdgeRpcClient::State {
         return future;
     }
 
+    void reject_preparation(const std::shared_ptr<Pending>& call, std::exception_ptr error) {
+        std::lock_guard<std::mutex> lock(mutex);
+        if (stopped) return;
+        call->promise.set_exception(error);
+        pending.erase(call->id);
+    }
+
     void send_loop() {
         try {
             for (;;) {
@@ -114,10 +132,35 @@ struct EdgeRpcClient::State {
                     queue.pop_front();
                 }
                 Frame request;
-                request.payload = encode_tensor(submission.input);
                 request.header.request_id = submission.pending->id;
                 request.header.flags = static_cast<std::uint32_t>(submission.pending->operation);
-                request.header.payload_size = static_cast<std::uint32_t>(request.payload.size());
+                try {
+                    std::shared_ptr<SharedBuffer> shared;
+                    SharedDescriptor descriptor;
+                    if (submission.pending->transport == TensorTransport::SharedMemory) {
+                        const auto bytes = submission.input.size() * sizeof(float);
+                        shared = std::make_shared<SharedBuffer>(SharedBuffer::create(std::max<std::size_t>(8, bytes * 2)));
+                        shared->write_tensor(0, submission.input);
+                        descriptor = {shared->name(), shared->size(), 0, bytes,
+                                      static_cast<std::uint32_t>(bytes), static_cast<std::uint32_t>(submission.input.size())};
+                        request.header.type = MessageType::ShmRequest;
+                        request.payload = encode_shared_descriptor(descriptor);
+                    } else request.payload = encode_tensor(submission.input);
+                    request.header.payload_size = static_cast<std::uint32_t>(request.payload.size());
+                    {
+                        std::lock_guard<std::mutex> lock(mutex);
+                        if (stopped) return;
+                        submission.pending->shared = std::move(shared);
+                        submission.pending->descriptor = std::move(descriptor);
+                        submission.pending->ready_for_reply = true;
+                        ++reply_count;
+                    }
+                } catch (...) {
+                    // Allocation/preparation failed before any frame bytes were sent.
+                    reject_preparation(submission.pending, std::current_exception());
+                    continue;
+                }
+                changed.notify_all();
                 send_frame(socket.get(), request, timeout);
             }
         } catch (...) { fail(std::current_exception()); }
@@ -128,19 +171,24 @@ struct EdgeRpcClient::State {
             for (;;) {
                 {
                     std::unique_lock<std::mutex> lock(mutex);
-                    changed.wait(lock, [&] { return stopped || !pending.empty(); });
+                    changed.wait(lock, [&] { return stopped || reply_count != 0; });
                     if (stopped) return;
                 }
                 Frame frame;
                 if (!receive_frame(socket.get(), frame, timeout))
                     throw std::runtime_error("server disconnected before response");
                 std::shared_ptr<Pending> call;
+                std::shared_ptr<SharedBuffer> shared;
+                SharedDescriptor descriptor;
                 {
                     std::lock_guard<std::mutex> lock(mutex);
                     if (stopped) return;
                     const auto found = pending.find(frame.header.request_id);
                     if (found == pending.end()) throw ProtocolError("unknown or duplicate response request ID");
                     call = found->second;
+                    if (!call->ready_for_reply) throw ProtocolError("response arrived before request preparation");
+                    shared = call->shared;
+                    descriptor = call->descriptor;
                 }
                 if (frame.header.flags != static_cast<std::uint32_t>(call->operation))
                     throw ProtocolError("response operation mismatch");
@@ -153,11 +201,18 @@ struct EdgeRpcClient::State {
                     remote_error = std::make_exception_ptr(RpcError(frame.header.status,
                         std::string(frame.payload.begin(), frame.payload.end())));
                 } else {
-                    if (frame.header.type != MessageType::Response || frame.header.status != Status::Ok)
+                    const auto expected = call->transport == TensorTransport::SharedMemory ?
+                        MessageType::ShmResponse : MessageType::Response;
+                    if (frame.header.type != expected || frame.header.status != Status::Ok)
                         throw ProtocolError("unexpected response type or status");
-                    if (frame.payload.size() != call->elements * sizeof(float))
-                        throw ProtocolError("response tensor size mismatch");
-                    response.output = decode_tensor(frame.payload);
+                    if (call->transport == TensorTransport::SharedMemory) {
+                        if (!shared || !frame.payload.empty()) throw ProtocolError("invalid SHM completion");
+                        response.output = shared->read_tensor(descriptor.output_offset, call->elements);
+                    } else {
+                        if (frame.payload.size() != call->elements * sizeof(float))
+                            throw ProtocolError("response tensor size mismatch");
+                        response.output = decode_tensor(frame.payload);
+                    }
                 }
                 {
                     std::lock_guard<std::mutex> lock(mutex);
@@ -169,6 +224,7 @@ struct EdgeRpcClient::State {
                         call->promise.set_value(std::move(response));
                     }
                     pending.erase(call->id);
+                    --reply_count;
                 }
             }
         } catch (...) { fail(std::current_exception()); }
@@ -179,11 +235,11 @@ EdgeRpcClient::EdgeRpcClient(const std::string& path, Timeout timeout, std::size
     : state_(std::make_unique<State>(path, timeout, max_pending)) {}
 EdgeRpcClient::~EdgeRpcClient() = default;
 void EdgeRpcClient::close() { state_->close(); }
-std::future<Response> EdgeRpcClient::infer_async(std::vector<float> input, Operation operation) {
-    return state_->submit(std::move(input), operation);
+std::future<Response> EdgeRpcClient::infer_async(std::vector<float> input, Operation operation, TensorTransport transport) {
+    return state_->submit(std::move(input), operation, transport);
 }
-Response EdgeRpcClient::infer_sync(const std::vector<float>& input, Operation operation) {
-    return infer_async(input, operation).get();
+Response EdgeRpcClient::infer_sync(const std::vector<float>& input, Operation operation, TensorTransport transport) {
+    return infer_async(input, operation, transport).get();
 }
 
 } // namespace edgerpc

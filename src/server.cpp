@@ -1,5 +1,6 @@
 #include "edgerpc/server.hpp"
 #include "edgerpc/thread_pool.hpp"
+#include "edgerpc/shared_buffer.hpp"
 
 #include <atomic>
 #include <cerrno>
@@ -42,17 +43,23 @@ struct Connection {
 };
 
 void execute_request(const std::shared_ptr<Connection>& connection,
-                     ExecutionBackend& backend, const Frame& request) {
+                     ExecutionBackend& backend, const Frame& request,
+                     const std::shared_ptr<SharedBuffer>& shared, const SharedDescriptor& descriptor) {
     try {
         if (connection->alive) {
             Frame response;
             response.header = request.header;
             response.header.type = MessageType::Response;
             try {
-                const auto input = decode_tensor(request.payload);
+                const auto input = shared ? shared->read_tensor(descriptor.input_offset, descriptor.elements)
+                                          : decode_tensor(request.payload);
                 const auto output = backend.execute(input, static_cast<Operation>(request.header.flags));
                 if (output.size() != input.size()) throw std::runtime_error("backend output size mismatch");
-                response.payload = encode_tensor(output);
+                if (shared) {
+                    shared->write_tensor(descriptor.output_offset, output);
+                    response.header.type = MessageType::ShmResponse;
+                    response.header.payload_size = 0;
+                } else response.payload = encode_tensor(output);
             } catch (...) {
                 response = error_frame(request.header, Status::InternalError, "execution backend failed");
             }
@@ -72,8 +79,8 @@ void serve_connection(int fd, ExecutionBackend& backend, const ServerOptions& op
             // Idle deadlines must not discard work that is still executing.
             const bool had_work = connection->outstanding != 0;
             if (had_work) idle_since = std::chrono::steady_clock::now();
-            pollfd descriptor{fd, POLLIN, 0};
-            const int result = ::poll(&descriptor, 1, 100);
+            pollfd socket_event{fd, POLLIN, 0};
+            const int result = ::poll(&socket_event, 1, 100);
             if (result < 0) {
                 if (errno == EINTR) continue;
                 throw std::system_error(errno, std::generic_category(), "poll connection");
@@ -92,15 +99,29 @@ void serve_connection(int fd, ExecutionBackend& backend, const ServerOptions& op
             if (!receive_frame(fd, request, options.timeout)) break;
             idle_since = std::chrono::steady_clock::now();
             const auto header = request.header;
-            if (header.type != MessageType::Request || header.status != Status::Ok ||
+            if ((header.type != MessageType::Request && header.type != MessageType::ShmRequest) ||
+                header.status != Status::Ok ||
                 header.request_id == 0 || header.flags > static_cast<std::uint32_t>(Operation::Compute) ||
-                request.payload.size() % 4 != 0) {
+                (header.type == MessageType::Request && request.payload.size() % 4 != 0)) {
                 connection->send(error_frame(header, Status::InvalidRequest, "invalid request metadata or tensor size"));
                 continue;
             }
+            std::shared_ptr<SharedBuffer> shared;
+            SharedDescriptor descriptor;
+            if (header.type == MessageType::ShmRequest) {
+                try {
+                    descriptor = decode_shared_descriptor(request.payload);
+                    shared = std::make_shared<SharedBuffer>(SharedBuffer::open(descriptor.name, descriptor.region_bytes));
+                    // Admission transfers ownership: never need to reopen this per-request object.
+                    shared->unlink_name();
+                } catch (const std::exception&) {
+                    connection->send(error_frame(header, Status::InvalidRequest, "invalid or unavailable shared-memory region"));
+                    continue;
+                }
+            }
             ++connection->outstanding;
-            if (!pool.try_submit([connection, &backend, request = std::move(request)] {
-                execute_request(connection, backend, request);
+            if (!pool.try_submit([connection, &backend, request = std::move(request), shared, descriptor] {
+                execute_request(connection, backend, request, shared, descriptor);
             })) {
                 --connection->outstanding;
                 connection->send(error_frame(header, Status::Overloaded, "server execution queue is full"));
