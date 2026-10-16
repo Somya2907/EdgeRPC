@@ -61,6 +61,8 @@ if(BUILD_TESTING)
     add_test(NAME integration COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_integration.py
         --bin-dir $<TARGET_FILE_DIR:edgerpc_server>)
+    add_test(NAME benchmark_analysis COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_benchmarks.py)
+    set_tests_properties(benchmark_analysis PROPERTIES TIMEOUT 20)
     set_tests_properties(protocol PROPERTIES TIMEOUT 20)
     set_tests_properties(async PROPERTIES TIMEOUT 40)
     set_tests_properties(shared_memory PROPERTIES TIMEOUT 20)

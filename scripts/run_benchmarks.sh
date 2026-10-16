@@ -48,7 +48,7 @@ metadata = {
     "system": platform.platform(), "machine": platform.machine(),
     "compiler": compiler.stdout.splitlines()[0], "build_dir": str(Path(sys.argv[2]).resolve()),
     "requests": sys.argv[3], "warmup": sys.argv[4], "sizes_kib": sys.argv[5].split(),
-    "mode": "socket-sync", "inflight": 1, "workers": 1, "delay_us": 0,
+    "mode": "socket-sync", "inflight": 1, "workers": 1, "delay_us": 0, "instrumented": 1,
     "note": "CPU client and CPU simulator; not NPU measurements. Use a Release build.",
 }
 cache = Path(sys.argv[2]) / "CMakeCache.txt"

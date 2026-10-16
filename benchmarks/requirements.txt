@@ -1,0 +1,2 @@
+# Optional chart export; the runtime and CSV validation use no Python packages.
+matplotlib>=3.5,<4

@@ -43,7 +43,7 @@ metadata = {
     "compiler": subprocess.check_output(["c++", "--version"], text=True).splitlines()[0],
     "build_dir": str(build), "requests": int(sys.argv[3]), "warmup": int(sys.argv[4]),
     "prepare_us": int(sys.argv[5]), "delay_us": int(sys.argv[6]),
-    "mode": "shm-double-buffer", "slots": [1, 2, 4], "inflight": 4, "workers": 1,
+    "mode": "shm-double-buffer", "slots": [1, 2, 4], "inflight": 4, "workers": 1, "instrumented": 1,
     "tensor_bytes": 4096, "workload": "compute",
     "note": "One trial per slot count; synthetic CPU preparation/execution, not hardware or a repeated performance study.",
     "cmake_settings": [line for line in (build / "CMakeCache.txt").read_text().splitlines()
