@@ -428,6 +428,175 @@ void worker_survives_task_exception() {
     result.get();
 }
 
+struct PoolPeer {
+    std::vector<edgerpc::SharedBuffer> mappings;
+    std::vector<edgerpc::SharedDescriptor> descriptors;
+    std::vector<std::uint64_t> generations;
+    PoolPeer(int fd, int slots) {
+        for (int i = 0; i < slots; ++i) {
+            auto frame = request(fd);
+            check(frame.header.type == edgerpc::MessageType::RegisterBuffer, "missing registration");
+            const auto registration = edgerpc::decode_registration(frame.payload);
+            check(registration.slot == static_cast<unsigned>(i + 1), "registration order");
+            descriptors.push_back(registration.descriptor);
+            mappings.push_back(edgerpc::SharedBuffer::open(registration.descriptor.name, registration.descriptor.region_bytes));
+            mappings.back().unlink_name();
+            frame.header.type = edgerpc::MessageType::RegisterAck;
+            frame.payload = edgerpc::encode_slot_id(registration.slot);
+            frame.header.payload_size = 4;
+            edgerpc::send_frame(fd, frame, 2s);
+        }
+        generations.resize(slots);
+    }
+    void respond(int fd, edgerpc::Frame frame, bool stale = false) {
+        check(frame.header.type == edgerpc::MessageType::PooledRequest, "expected pooled request");
+        auto ref = edgerpc::decode_slot_reference(frame.payload);
+        const auto index = ref.slot - 1;
+        check(index < mappings.size() && ref.generation > generations[index], "stale slot submission");
+        generations[index] = ref.generation;
+        const auto begin = edgerpc::monotonic_ns();
+        auto values = mappings[index].read_tensor(descriptors[index].input_offset, ref.elements);
+        if (frame.header.flags == 1) for (auto& value : values) value = value * 2 + 1;
+        mappings[index].write_tensor(descriptors[index].output_offset, values);
+        if (stale) ++ref.generation;
+        frame.header.type = edgerpc::MessageType::PooledResponse;
+        frame.payload = edgerpc::encode_pool_completion({ref, begin, begin, edgerpc::monotonic_ns()});
+        frame.header.payload_size = static_cast<std::uint32_t>(frame.payload.size());
+        edgerpc::send_frame(fd, frame, 2s);
+    }
+};
+
+void pooled_reversed_reuse() {
+    with_peer([](int fd) {
+        PoolPeer pool(fd, 2);
+        for (int pair = 0; pair < 16; ++pair) {
+            auto a = request(fd), b = request(fd);
+            pool.respond(fd, b);
+            pool.respond(fd, a);
+        }
+    }, [](const std::string& path) {
+        edgerpc::EdgeRpcClient client(path, 2s, 32, {2, 1, 0us});
+        std::vector<std::future<edgerpc::Response>> futures;
+        for (int i = 0; i < 32; ++i) futures.push_back(client.infer_async({static_cast<float>(i)},
+            edgerpc::Operation::Compute, edgerpc::TensorTransport::SharedPool));
+        std::set<std::pair<std::uint32_t,std::uint64_t>> uses;
+        for (int i = 0; i < 32; ++i) {
+            ready(futures[i]);
+            const auto result = futures[i].get();
+            check(result.output == std::vector<float>{2.0f * i + 1}, "pooled reply mismatch");
+            uses.emplace(result.pipeline.slot, result.pipeline.generation);
+            check(result.pipeline.prepare_end_ns >= result.pipeline.prepare_begin_ns &&
+                  result.pipeline.execute_end_ns >= result.pipeline.execute_begin_ns, "missing pipeline trace");
+        }
+        check(uses.size() == 32, "slot generation reused");
+    });
+}
+
+void pooled_failure(int mode) { // close, disconnect, timeout, stale completion
+    with_peer([mode](int fd) {
+        PoolPeer pool(fd, 1);
+        auto first = request(fd);
+        if (mode == 1) return;
+        if (mode == 3) pool.respond(fd, first, true);
+        edgerpc::Frame remaining;
+        check(!edgerpc::receive_frame(fd, remaining, 2s), "failure did not close connection");
+    }, [mode](const std::string& path) {
+        edgerpc::EdgeRpcClient client(path, 100ms, 32, {1, 1, 0us});
+        std::vector<std::future<edgerpc::Response>> futures;
+        for (int i = 0; i < 32; ++i) futures.push_back(client.infer_async({1},
+            edgerpc::Operation::Compute, edgerpc::TensorTransport::SharedPool));
+        if (mode == 0) { std::this_thread::sleep_for(20ms); client.close(); }
+        for (auto& future : futures) { ready(future); must_fail([&] { future.get(); }); }
+    });
+}
+
+void pooled_remote_error_reclaims_slot() {
+    with_peer([](int fd) {
+        PoolPeer pool(fd, 1);
+        auto first = request(fd);
+        first.header.type = edgerpc::MessageType::Error;
+        first.header.status = edgerpc::Status::Overloaded;
+        first.payload = {'f','u','l','l'};
+        first.header.payload_size = 4;
+        edgerpc::send_frame(fd, first, 2s);
+        pool.respond(fd, request(fd));
+    }, [](const std::string& path) {
+        edgerpc::EdgeRpcClient client(path, 2s, 32, {1, 1, 0us});
+        auto first = client.infer_async({1}, edgerpc::Operation::Compute, edgerpc::TensorTransport::SharedPool);
+        auto second = client.infer_async({3}, edgerpc::Operation::Compute, edgerpc::TensorTransport::SharedPool);
+        ready(first);
+        bool overloaded = false;
+        try { first.get(); } catch (const edgerpc::RpcError& error) { overloaded = error.status() == edgerpc::Status::Overloaded; }
+        check(overloaded, "pooled remote error missing");
+        ready(second);
+        const auto result = second.get();
+        check(result.output == std::vector<float>{7} && result.pipeline.generation == 2, "error did not reclaim slot");
+    });
+}
+
+void pooled_concurrent_callers() {
+    with_peer([](int fd) {
+        PoolPeer pool(fd, 2);
+        for (int i = 0; i < 64; ++i) pool.respond(fd, request(fd));
+    }, [](const std::string& path) {
+        edgerpc::EdgeRpcClient client(path, 2s, 128, {2, 1, 0us});
+        std::vector<std::future<void>> callers;
+        for (int thread = 0; thread < 8; ++thread) callers.push_back(std::async(std::launch::async, [&, thread] {
+            for (int i = 0; i < 8; ++i) {
+                const float input = static_cast<float>(thread * 8 + i);
+                auto result = client.infer_async({input}, edgerpc::Operation::Compute, edgerpc::TensorTransport::SharedPool);
+                ready(result);
+                check(result.get().output == std::vector<float>{input * 2 + 1}, "concurrent pool mismatch");
+            }
+        }));
+        for (auto& caller : callers) { ready(caller); caller.get(); }
+    });
+}
+
+void pooled_mixed_sizes_and_transports() {
+    with_peer([](int fd) {
+        PoolPeer pool(fd, 2);
+        pool.respond(fd, request(fd));
+        reply(fd, request(fd));
+        reply(fd, request(fd));
+        pool.respond(fd, request(fd));
+    }, [](const std::string& path) {
+        edgerpc::EdgeRpcClient client(path, 2s, 32, {2, 4, 0us});
+        must_fail([&] { client.infer_async(std::vector<float>(5), edgerpc::Operation::Compute,
+                                         edgerpc::TensorTransport::SharedPool); });
+        auto empty = client.infer_async({}, edgerpc::Operation::Compute, edgerpc::TensorTransport::SharedPool);
+        auto socket = client.infer_async({1});
+        auto shared = client.infer_async({2}, edgerpc::Operation::Compute, edgerpc::TensorTransport::SharedMemory);
+        auto small = client.infer_async({3,4}, edgerpc::Operation::Noop, edgerpc::TensorTransport::SharedPool);
+        check(empty.get().output.empty(), "empty pooled tensor");
+        check(socket.get().output == std::vector<float>{3}, "mixed socket tensor");
+        check(shared.get().output == std::vector<float>{5}, "mixed shared tensor");
+        check(small.get().output == std::vector<float>({3,4}), "short pooled noop tensor");
+    });
+}
+
+void pooled_registration_failure_cleanup() {
+    for (int mode = 0; mode < 3; ++mode) {
+        std::vector<edgerpc::SharedDescriptor> descriptors;
+        with_peer([&](int fd) {
+            PoolPeer first(fd, 1);
+            descriptors.push_back(first.descriptors.front());
+            auto second = request(fd);
+            descriptors.push_back(edgerpc::decode_registration(second.payload).descriptor);
+            if (mode == 2) return;
+            second.header.type = mode == 0 ? edgerpc::MessageType::Error : edgerpc::MessageType::RegisterAck;
+            second.header.status = mode == 0 ? edgerpc::Status::InvalidRequest : edgerpc::Status::Ok;
+            second.payload = mode == 0 ? std::vector<std::uint8_t>{'b','a','d'} : edgerpc::encode_slot_id(1);
+            second.header.payload_size = static_cast<std::uint32_t>(second.payload.size());
+            edgerpc::send_frame(fd, second, 2s);
+        }, [](const std::string& path) {
+            must_fail([&] { edgerpc::EdgeRpcClient client(path, 2s, 32, {2, 4, 0us}); });
+        });
+        for (const auto& descriptor : descriptors)
+            must_fail([&] { edgerpc::SharedBuffer::open(descriptor.name, descriptor.region_bytes); });
+    }
+}
+
 } // namespace
 
 int main() {
@@ -443,7 +612,14 @@ int main() {
         {"protocol failure settles all", protocol_failure_settles_all}, {"remote errors isolated", remote_error_isolated},
         {"concurrent callers", concurrent_callers}, {"idle receiver waits", idle_receiver_waits},
         {"concurrent close and submit", concurrent_close_and_submit},
-        {"bounded pool and shutdown", bounded_pool_and_shutdown}, {"worker survives task exception", worker_survives_task_exception}};
+        {"bounded pool and shutdown", bounded_pool_and_shutdown}, {"worker survives task exception", worker_survives_task_exception},
+        {"pooled reversed reuse", pooled_reversed_reuse}, {"pooled close", [] { pooled_failure(0); }},
+        {"pooled disconnect", [] { pooled_failure(1); }}, {"pooled timeout", [] { pooled_failure(2); }},
+        {"pooled stale completion", [] { pooled_failure(3); }},
+        {"pooled remote error reclaims slot", pooled_remote_error_reclaims_slot},
+        {"pooled concurrent callers", pooled_concurrent_callers},
+        {"pooled mixed sizes and transports", pooled_mixed_sizes_and_transports},
+        {"pooled registration failure cleanup", pooled_registration_failure_cleanup}};
     std::size_t failures = 0;
     for (const auto& item : cases) {
         try { item.second(); std::cout << "PASS " << item.first << '\n'; }

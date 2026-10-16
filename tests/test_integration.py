@@ -21,6 +21,8 @@ import unittest
 
 HEADER = struct.Struct("!IHHQIII")
 SHARED_DESCRIPTOR = struct.Struct("!HHQQQIII")
+SLOT_REFERENCE = struct.Struct("!IIQQ")
+POOL_COMPLETION = struct.Struct("!IIQQQQQ")
 MAGIC = 0x45525043
 MAX_BYTES = 8 * 1024 * 1024
 BIN = None
@@ -396,6 +398,138 @@ class Integration(unittest.TestCase):
                 peer.sendall(frame(kind=kind, size=size))
                 self.assert_closed(peer)
         self.server.demo("--verify")
+
+    def register_slot(self, peer, region, slot=1, request_id=1):
+        peer.sendall(frame(struct.pack("!I", slot) + region.descriptor(),
+                           kind=6, flags=0, request_id=request_id))
+        header, payload = receive(peer)
+        self.assertEqual((header[2], header[3], header[5], header[6]), (7, request_id, 0, 0))
+        self.assertEqual(payload, struct.pack("!I", slot))
+        self.assertFalse(region.exists())
+
+    def test_pool_registration_reuse_and_generation_checks(self):
+        with SharedRegion() as region, self.peer() as peer:
+            self.register_slot(peer, region)
+            for generation in range(1, 33):
+                region.mapping[:16] = struct.pack("=4f", generation, -1, 0, 2)
+                peer.sendall(frame(SLOT_REFERENCE.pack(1, 4, generation, 0), kind=8, request_id=generation + 10))
+                header, payload = receive(peer)
+                self.assertEqual((header[2], header[3], header[5]), (9, generation + 10, 0))
+                fields = POOL_COMPLETION.unpack(payload)
+                self.assertEqual(fields[:4], (1, 4, generation, 0))
+                self.assertTrue(0 < fields[4] <= fields[5] <= fields[6])
+                self.assertEqual(struct.unpack("=4f", region.mapping[16:32]), (generation * 2 + 1, -1, 1, 5))
+            for slot, elements, generation, reserved in ((1,4,32,0), (1,4,0,0), (2,4,33,0),
+                                                        (1,5,33,0), (1,4,33,1)):
+                peer.sendall(frame(SLOT_REFERENCE.pack(slot, elements, generation, reserved), kind=8, request_id=100))
+                header, _ = receive(peer)
+                self.assertEqual((header[2], header[5]), (3, 1))
+            peer.sendall(frame(struct.pack("!I", 1) + region.descriptor(), kind=6, flags=0, request_id=101))
+            self.assertEqual(receive(peer)[0][5], 1)  # Duplicate registration cannot replace a live mapping.
+            peer.sendall(frame(SLOT_REFERENCE.pack(1, 4, 33, 0), kind=8, request_id=102))
+            self.assertEqual(receive(peer)[0][2], 9)
+
+    def test_pool_busy_slot_is_rejected_without_releasing_owner(self):
+        self.restart_server("--delay-us", "100000")
+        with SharedRegion() as region, self.peer() as peer:
+            self.register_slot(peer, region)
+            region.mapping[:16] = struct.pack("=4f", 1, 2, 3, 4)
+            peer.sendall(b"".join(frame(SLOT_REFERENCE.pack(1, 4, gen, 0), kind=8, request_id=gen + 10)
+                                  for gen in (1, 2, 3)))
+            replies = [receive(peer) for _ in range(3)]
+            self.assertEqual({header[3]: header[5] for header, _ in replies}, {11: 0, 12: 1, 13: 1})
+            self.assertEqual(struct.unpack("=4f", region.mapping[16:32]), (3, 5, 7, 9))
+            peer.sendall(frame(SLOT_REFERENCE.pack(1, 4, 4, 0), kind=8, request_id=14))
+            self.assertEqual(receive(peer)[0][2], 9)
+
+    def test_pool_demo_counts_boundaries_and_configuration(self):
+        for slots in (1, 2, 4):
+            result = self.server.demo("--transport", "pool", "--mode", "async", "--buffer-slots", str(slots),
+                                      "--requests", "32", "--elements", "1024", "--verify")
+            lines = result.stdout.splitlines()
+            self.assertEqual(len(lines), 32)
+            self.assertTrue(all("status=OK verified=true" in line and "generation=" in line for line in lines))
+        for elements in (0, MAX_BYTES // 4):
+            self.server.demo("--transport", "pool", "--buffer-slots", "1", "--elements", str(elements), "--verify")
+        for options in (("--transport", "pool", "--buffer-slots", "3"), ("--buffer-slots", "2"),
+                        ("--transport", "pool", "--prepare-us", "1000001")):
+            result = subprocess.run([str(BIN / "edgerpc_demo"), "--socket", str(self.path), *options],
+                                    text=True, capture_output=True, timeout=5)
+            self.assertNotEqual(result.returncode, 0)
+
+    def pool_benchmark(self, slots, requests=64, prepare_us=1000):
+        destination = Path(self.directory.name) / f"pool-{slots}.csv"
+        result = subprocess.run(
+            [str(BIN / "edgerpc_benchmark"), "--socket", str(self.path), "--mode", "shm-double-buffer",
+             "--buffer-slots", str(slots), "--inflight", "4", "--requests", str(requests),
+             "--warmup", "8", "--size-kib", "4", "--prepare-us", str(prepare_us), "--csv", str(destination)],
+            text=True, capture_output=True, check=True, timeout=20)
+        self.assertIn(f"completed={requests} failures=0", result.stdout)
+        with destination.open(newline="") as stream:
+            rows = list(csv.DictReader(stream))
+        self.assertEqual(len(rows), requests)
+        self.assertEqual({int(row["request_id"]) for row in rows}, set(range(slots + 9, slots + requests + 9)))
+        previous = {}
+        for row in rows:
+            self.assertNotIn(None, row)
+            slot, gen = int(row["slot"]), int(row["generation"])
+            p0, p1, q, e0, e1 = [int(row[field]) for field in
+                                  ("prepare_begin_ns", "prepare_end_ns", "queued_ns", "execute_begin_ns", "execute_end_ns")]
+            self.assertTrue(1 <= slot <= slots and 0 < p0 <= p1 <= q <= e0 <= e1)
+            self.assertTrue(all(float(row[field]) >= 0 for field in ("queue_us", "execute_us", "buffer_wait_us")))
+            if slot in previous:
+                self.assertGreater(gen, previous[slot][0])
+                self.assertGreaterEqual(p0, previous[slot][1])  # No preparation before previous execution completes.
+            previous[slot] = gen, e1
+        return rows
+
+    def test_pool_thousand_requests_and_timestamped_overlap(self):
+        self.restart_server("--workers", "1", "--delay-us", "1000")
+        for slots in (1, 2, 4):
+            rows = self.pool_benchmark(slots, requests=1000 if slots == 2 else 64)
+            overlaps = sum(any(a["slot"] != b["slot"] and
+                               max(int(a["prepare_begin_ns"]), int(b["execute_begin_ns"])) <
+                               min(int(a["prepare_end_ns"]), int(b["execute_end_ns"])) for b in rows) for a in rows)
+            if slots == 1:
+                self.assertEqual(overlaps, 0)
+            else:
+                self.assertGreater(overlaps, 0)
+
+    def test_pool_crash_reclaims_registration_and_can_restart(self):
+        with SharedRegion() as region, self.peer() as peer:
+            self.register_slot(peer, region)
+            self.server.process.kill()
+            self.server.process.wait(timeout=3)
+            self.assert_closed(peer)
+            self.assertFalse(region.exists())
+        self.restart_server()
+        self.server.demo("--transport", "pool", "--mode", "async", "--requests", "32", "--verify")
+
+    def test_pool_overload_releases_slot_for_next_generation(self):
+        self.restart_server("--workers", "1", "--queue-capacity", "1", "--delay-us", "100000")
+        with ExitStack() as stack, self.peer() as peer:
+            for slot in range(1, 5):
+                region = stack.enter_context(SharedRegion())
+                self.register_slot(peer, region, slot=slot, request_id=slot)
+                region.mapping[:16] = struct.pack("=4f", slot, -1, 0, 2)
+            peer.sendall(b"".join(frame(SLOT_REFERENCE.pack(slot, 4, 1, 0), kind=8, request_id=slot + 10)
+                                  for slot in range(1, 5)))
+            replies = [receive(peer) for _ in range(4)]
+            statuses = [header[5] for header, _ in replies]
+            self.assertIn(0, statuses)
+            self.assertIn(3, statuses)
+            self.assertTrue(all(status in (0, 3) for status in statuses))
+            for slot in range(1, 5):
+                peer.sendall(frame(SLOT_REFERENCE.pack(slot, 4, 2, 0), kind=8, request_id=slot + 20))
+                header, _ = receive(peer)
+                self.assertEqual((header[2], header[3], header[5]), (9, slot + 20, 0))
+
+    def test_pool_control_frame_size_limits(self):
+        for kind, size in ((6,73), (6,75), (7,0), (7,8), (8,0), (8,23), (8,25), (9,0), (9,49)):
+            with self.subTest(kind=kind, size=size), self.peer() as peer:
+                peer.sendall(frame(kind=kind, size=size))
+                self.assert_closed(peer)
+        self.server.demo("--transport", "pool", "--verify")
 
     def test_malformed_headers_and_recovery(self):
         bad_headers = [frame(magic=0), frame(version=9), frame(kind=9), frame(size=MAX_BYTES + 1)]

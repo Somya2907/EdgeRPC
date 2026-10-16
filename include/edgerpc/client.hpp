@@ -1,6 +1,7 @@
 #pragma once
 
 #include "edgerpc/transport.hpp"
+#include "edgerpc/metrics.hpp"
 #include <future>
 #include <memory>
 
@@ -12,6 +13,13 @@ struct Response {
     Status status = Status::Ok;
     // Client-side decoding/validation completion, before promise notification.
     std::chrono::steady_clock::time_point completed_at{};
+    PipelineTrace pipeline{};
+};
+
+struct PoolOptions {
+    std::size_t slots = 0; // Disabled by default; enable 1, 2, or 4 fixed-capacity slots.
+    std::size_t max_elements = 0;
+    std::chrono::microseconds prepare_delay{0}; // Explicit simulated preparation for experiments.
 };
 
 class RpcError : public std::runtime_error {
@@ -26,7 +34,7 @@ private:
 class EdgeRpcClient {
 public:
     explicit EdgeRpcClient(const std::string& path, Timeout timeout = kDefaultTimeout,
-                           std::size_t max_pending = 32);
+                           std::size_t max_pending = 32, PoolOptions pool = {});
     ~EdgeRpcClient();
     EdgeRpcClient(const EdgeRpcClient&) = delete;
     EdgeRpcClient& operator=(const EdgeRpcClient&) = delete;
