@@ -1,4 +1,4 @@
-name: C++ baseline
+name: C++ runtime
 
 on: [push, pull_request]
 

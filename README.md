@@ -1,14 +1,15 @@
 # EdgeRPC
 
-A C++17 client/server runtime for studying inference RPC across processes. A client sends float32 tensors over a Unix domain socket to a **CPU-based simulated accelerator**, which returns either `2*x + 1` (`compute`) or the input unchanged (`noop`).
+A C++17 client/server runtime for studying inference RPC across processes. A client exchanges float32 tensors through socket payloads or POSIX shared memory with a **CPU-based simulated accelerator**, which returns either `2*x + 1` (`compute`) or the input unchanged (`noop`). Unix socket frames carry request and completion control messages in both modes.
 
 This is a software prototype inspired by heterogeneous inference communication. It does **not** implement Qualcomm FastRPC, execute on an NPU, or measure CPU–NPU transfers.
 
-## Current milestone: asynchronous socket runtime
+## Current milestone: shared-memory transport
 
 - Reusable `edgerpc` library, server, demo client, and benchmark.
 - Thread-safe `infer_async()` submissions, futures, request-ID matching, and shared sync/async transport.
 - Bounded outstanding client requests and server task queues with explicit overload errors.
+- Per-request POSIX shared-memory tensors, validated descriptors, and metadata-only socket traffic.
 - Versioned binary frames, explicit big-endian integers and float32 values, unique client request IDs, and an 8 MiB tensor limit.
 - Partial read/write and interruption handling, bounded I/O deadlines, disconnect errors, and response validation.
 - Persistent connections, deterministic compute/noop workloads, and optional simulated execution delay.
@@ -16,7 +17,7 @@ This is a software prototype inspired by heterogeneous inference communication. 
 - Correctness and failure tests that run separate server/client processes.
 - Warm-up-separated measurements, per-request CSV, p50/p95/p99, and throughput.
 
-The synchronous baseline and async execution phases are implemented. Shared memory, double buffering, comparative performance reports, and target-platform validation remain in [the completion roadmap](docs/completion-plan.md). The server serves one active client connection at a time and supports multiple outstanding requests within it. Client submissions may come from multiple threads.
+Synchronous RPC, async execution, and shared-memory transport are implemented. Buffer reuse/double buffering, comparative performance reports, and target-platform validation remain in [the completion roadmap](docs/completion-plan.md). The server serves one active client connection at a time and supports multiple outstanding requests within it. Client submissions may come from multiple threads.
 
 ## Build and test
 
@@ -59,6 +60,7 @@ Terminal 2:
 ./build/edgerpc_demo --socket /tmp/edgerpc.sock --mode sync --elements 1024 --verify
 ./build/edgerpc_demo --socket /tmp/edgerpc.sock --workload noop --elements 1024 --verify
 ./build/edgerpc_demo --socket /tmp/edgerpc.sock --mode async --requests 32 --elements 1024 --verify
+./build/edgerpc_demo --socket /tmp/edgerpc.sock --mode async --transport shm --requests 32 --elements 1024 --verify
 ```
 
 Expect `status=OK verified=true` for every requested result. Stop the server with Ctrl-C. All binaries support `--help`. Tensor counts from zero through 2,097,152 float32 elements are supported. The server defaults to one worker and 32 queued tasks; configure `--queue-capacity` as needed. `--workers 2` through `16` is an optional parallel CPU experiment; it does not model a single serialized accelerator.
@@ -77,7 +79,12 @@ auto first = client.infer_async({1.0f, 2.0f});
 auto second = client.infer_async({3.0f, 4.0f});
 auto first_result = first.get();
 auto second_result = second.get();
+auto shared = client.infer_async({1.0f, 2.0f}, edgerpc::Operation::Compute,
+                               edgerpc::TensorTransport::SharedMemory);
+auto shared_result = shared.get();
 ```
+
+The third argument of both inference methods selects `Socket` (default) or `SharedMemory`; they can be mixed on one connection. SHM mode allocates a fresh object for each call and copies vectors into/out of native-endian mapped tensors. The server validates the descriptor/object and unlinks the name on admission. Both mappings remain valid until completion or cleanup. This phase reduces socket tensor transfers; it does not provide a reusable or zero-copy backend. See [layout, ownership, limits, and crash recovery](docs/shared-memory.md).
 
 Client capacity defaults to 32 **total outstanding calls**, including queued and sent requests; the constructor's third argument changes it (1–1024). A full client returns an already-failed future with `RpcError(Status::Overloaded)`. A full server queue returns the same status for that request. Valid remote errors leave other requests and the connection usable. Protocol errors, I/O failures, `close()`, and destruction settle outstanding futures with exceptions. `close()` is idempotent and joins owned threads. Do not destroy the client while another thread is calling its methods.
 
@@ -93,6 +100,9 @@ mkdir -p results
 ./build/edgerpc_benchmark --socket /tmp/edgerpc.sock --mode socket-async \
   --size-kib 64 --inflight 16 --requests 1000 --warmup 100 \
   --workload compute --csv results/async.csv
+./build/edgerpc_benchmark --socket /tmp/edgerpc.sock --mode shm-async \
+  --size-kib 64 --inflight 16 --requests 1000 --warmup 100 \
+  --workload compute --csv results/shm.csv
 ```
 
 Or let the script start and clean up its own server, use a private temporary socket, and save system/build metadata:
@@ -102,7 +112,7 @@ Or let the script start and clean up its own server, use a private temporary soc
 REQUESTS=5000 WARMUP=200 SIZES_KIB="4 64 1024 8192" ./scripts/run_benchmarks.sh
 ```
 
-The script currently runs the synchronous baseline; the benchmark binary supports both socket modes. Results go in a unique directory under ignored `results/`. Run repeated trials before interpreting performance. Compare both modes at `--inflight 1` to isolate API overhead; a single sync caller versus 16 async calls is a concurrency experiment. [Benchmark methodology](docs/benchmarks.md) explains timer boundaries and limitations. No optimization or NPU speedup is assumed.
+The script currently runs the synchronous baseline; the binary supports both socket modes and `shm-async`. Results go in ignored `results/`. Run repeated trials before interpreting performance. Compare transports at equal concurrency, tensor size, workload, delay, and worker count. A single sync caller versus 16 async calls is a concurrency experiment. SHM timings include fresh allocation/map setup for every call; pooled steady-state measurements come later. [Benchmark methodology](docs/benchmarks.md) explains timer boundaries and limitations. No speedup is assumed.
 
 ## Reliability and architecture
 
@@ -110,11 +120,12 @@ The script currently runs the synchronous baseline; the benchmark binary support
 Client process                             Server process
 API -> bounded submissions -> sender -> Unix socket -> bounded execution queue
 future <- ID matching <- receiver <- Unix socket <- worker(s): 2*x+1 / noop
+       \____________ native float32 shared-memory input/output ______________/
 ```
 
-See [the wire protocol](docs/protocol.md) and [architecture and next steps](docs/architecture.md).
+See [the wire protocol](docs/protocol.md), [shared-memory ownership](docs/shared-memory.md), and [architecture and next steps](docs/architecture.md).
 
-CTest includes nine protocol/backend/metrics groups, 13 async/concurrency groups, and 22 Python integration tests. They cover framing and tensor boundaries, reversed responses, concurrent callers, close/submission races, queue bounds, overload recovery, disconnects, deadlines, restart, and benchmark warm-up exclusion. Checks remain active in Release builds.
+Linux CTest includes nine protocol/backend/metrics groups, 18 async/concurrency groups, six buffer/descriptor groups, and 30 Python integration tests. Coverage includes zero/max tensors, independent mappings, invalid metadata/permissions, reversed mixed-mode replies, allocation failure, overload cleanup, disconnects, server crash/restart, and 1,000-request socket/SHM stress benchmarks. The allocation-failure injection uses a Linux-specific resource limit; other groups are shared with macOS. Checks remain active in Release builds.
 
 For a sanitizer build:
 
@@ -124,6 +135,6 @@ cmake --build build-sanitize --parallel 4
 ctest --test-dir build-sanitize --output-on-failure
 ```
 
-This is a **same-user, trusted-client local demo**. Socket permissions are 0600; use a private directory for concurrent runs. One client can occupy the server until it disconnects or becomes idle with no work outstanding. Queue limits bound request counts; choose lower capacities for large tensors (32 × 8 MiB is 256 MiB of queued tensor data before transient copies). There is no authentication, per-request cancellation, fair multi-client scheduling, or multi-tenant isolation. A killed process may leave a socket path; the next server reclaims it only after a refused connection probe. Existing files, symlinks, and active sockets are preserved.
+This is a **same-user, trusted-client local demo**. Socket/SHM permissions are 0600; use a private socket directory. One client can occupy the server until it disconnects or becomes idle with no work outstanding. Queue limits bound request counts; choose lower capacities for large tensors (each maximum SHM request reserves 16 MiB before vector copies). There is no authentication, per-request cancellation, fair multi-client scheduling, or multi-tenant isolation. A killed process may leave a socket path; the next server reclaims it after a refused connection probe. SHM names are removed at server admission; killing a client before admission can leave an orphan requiring identified-name cleanup. Existing regular files, symlinks, and active sockets are preserved.
 
 The current version is validated on Linux x86_64. CI is configured for Linux and macOS; macOS/Apple Silicon behavior still needs a run on that platform. Docker/ARM64 and hardware backends remain future work.
