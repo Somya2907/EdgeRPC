@@ -85,3 +85,48 @@ def plot(directory, summaries):
     fig.savefig(directory/"traffic.svg")
     fig.savefig(directory/"traffic.png",dpi=120)
     plt.close(fig)
+    # Fix size/workload/delay, then compare all latency quantiles across windows.
+    selected=[r for r in rows if r["tensor_bytes"]==size and r["delay_us"]==min(delays)]
+    fig,axes=plt.subplots(1,3,figsize=(16,5))
+    handles={}
+    for ax,metric in zip(axes,("p50_us","p95_us","p99_us")):
+        for name in labels:
+            series=sorted((r for r in selected if label(r)==name),key=lambda r:r["inflight"])
+            if not series:
+                continue
+            handles[name]=ax.errorbar([r["inflight"] for r in series],[r[metric+"_median"] for r in series],
+                yerr=[[r[metric+"_median"]-r[metric+"_min"] for r in series],
+                      [r[metric+"_max"]-r[metric+"_median"] for r in series]],
+                marker="o",capsize=3,color=colors[name],label=name)
+        ax.set(xlabel="Configured in-flight window",ylabel="Latency (μs)",title=metric.replace("_us",""))
+        ax.set_xticks(windows)
+        ax.grid(alpha=.25)
+    fig.suptitle(f"Latency vs concurrency — {size//1024} KiB compute, delay {min(delays)} μs; median and min–max")
+    fig.legend(list(handles.values()),list(handles),loc="lower center",ncol=3)
+    fig.tight_layout(rect=(0,.14,1,.93))
+    fig.savefig(directory/"concurrency.svg")
+    fig.savefig(directory/"concurrency.png",dpi=120)
+    plt.close(fig)
+    # Startup and first-call costs stay distinct from the warm measured loop.
+    selected=[r for r in rows if r["inflight"]==min(windows) and r["delay_us"]==min(delays)]
+    fig,axes=plt.subplots(1,2,figsize=(13,5))
+    handles={}
+    for ax,metric,title in zip(axes,("initialization_us","first_request_us"),("Client initialization","First client request")):
+        for name in labels:
+            series=sorted((r for r in selected if label(r)==name),key=lambda r:r["tensor_bytes"])
+            if not series:
+                continue
+            handles[name]=ax.errorbar([r["tensor_bytes"]/1024 for r in series],[r[metric+"_median"] for r in series],
+                yerr=[[r[metric+"_median"]-r[metric+"_min"] for r in series],
+                      [r[metric+"_max"]-r[metric+"_median"] for r in series]],
+                marker="o",capsize=3,color=colors[name],label=name)
+        ax.set(xlabel="Tensor size (KiB)",ylabel="Duration (μs)",title=title)
+        if all(r["tensor_bytes"]>0 for r in selected):
+            ax.set_xscale("log",base=2)
+        ax.grid(alpha=.25)
+    fig.suptitle(f"Client startup costs — window {min(windows)}, persistent server, compute; median and min–max")
+    fig.legend(list(handles.values()),list(handles),loc="lower center",ncol=3)
+    fig.tight_layout(rect=(0,.14,1,.93))
+    fig.savefig(directory/"startup.svg")
+    fig.savefig(directory/"startup.png",dpi=120)
+    plt.close(fig)

@@ -2,6 +2,7 @@
 import argparse
 import csv
 import gzip
+import hashlib
 import json
 import math
 from pathlib import Path
@@ -163,8 +164,15 @@ def report(directory, min_trials=5, plots=True):
     if plots:
         from plot_results import plot
         plot(directory, summaries)
-        lines += ["![Latency](latency.svg)", "![Throughput](throughput.svg)", "![Stages](stages.svg)", "![Socket traffic](traffic.svg)", ""]
+        lines += ["![Latency](latency.svg)", "![Throughput](throughput.svg)", "![Concurrency](concurrency.svg)",
+                  "![Client startup](startup.svg)", "![Stages](stages.svg)", "![Socket traffic](traffic.svg)", ""]
     (directory/"report.md").write_text("\n".join(lines))
+    # Report code can evolve without rewriting original measurement provenance.
+    code=Path(__file__).resolve().parent
+    provenance=dict(measurement_metadata_sha256=hashlib.sha256((directory/"metadata.json").read_bytes()).hexdigest(),
+                    report_source_sha256={name:hashlib.sha256((code/name).read_bytes()).hexdigest()
+                                          for name in ("report.py","plot_results.py")}, plots=plots)
+    (directory/"report-provenance.json").write_text(json.dumps(provenance,indent=2)+"\n")
     return summaries
 
 
