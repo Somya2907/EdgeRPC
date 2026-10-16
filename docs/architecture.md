@@ -2,6 +2,56 @@
 
 `edgerpc` separates the protocol, socket transport, POSIX shared buffers, execution backend, client, server, worker pool, and metrics. Applications own CLI parsing and process signal handling. The runtime has no external C++ dependencies.
 
+```mermaid
+flowchart LR
+    subgraph client[Client CPU process]
+        API[Sync / async API] --> Pending[Bounded pending calls]
+        Pending --> Sender[Sender thread]
+        Receiver[Receiver thread] --> Futures[ID-matched futures]
+    end
+    Sender -->|Framed requests| Reader[Server reader]
+    subgraph server[Server CPU process]
+        Reader --> Queue[Bounded waiting queue]
+        Queue --> Workers[Worker threads]
+        Workers --> Backend[MockExecutor]
+        Backend --> Writer[Serialized response writer]
+    end
+    Writer -->|Framed completions| Receiver
+    Sender -->|Input copy| SHM[Shared tensor regions]
+    SHM -->|Input copy| Workers
+    Workers -->|Output copy| SHM
+    SHM -->|Output copy| Receiver
+```
+
+Socket mode carries tensors in frames; SHM modes use the shared-region path for
+tensor data and frames for control. Both processes execute on CPUs.
+
+## One pooled request
+
+```mermaid
+sequenceDiagram
+    participant Caller
+    participant Sender
+    participant Server
+    participant Worker
+    participant Receiver
+    Caller->>Sender: infer_async(input), reserve pending ID
+    Sender->>Sender: Acquire slot, increment generation, fill input
+    Sender->>Server: PooledRequest(ID, slot, generation, count)
+    Server->>Server: Validate reference, mark busy, enqueue
+    Server->>Worker: Execute accepted generation
+    Worker->>Worker: Copy input, compute, write mapped output
+    Worker->>Server: Clear busy, serialize completion
+    Server->>Receiver: PooledResponse(ID, slot, generation, trace)
+    Receiver->>Receiver: Validate, copy output, release slot
+    Receiver-->>Caller: Set future to owned output
+```
+
+Registration/map/unlink occurs once before inference I/O threads start. A valid
+overload/error completion takes the error path and reclaims that request's lease;
+disconnect stops reuse. The [pool state machine](pipeline.md) specifies those
+branches. Multiple workers may complete different requests out of order.
+
 ## Client lifecycle
 
 1. `EdgeRpcClient` opens one persistent Unix domain socket, optionally allocates/registers a fixed pool, and starts a sender and receiver.
@@ -39,3 +89,21 @@ The benchmark measures submission through client decoding/validation or shared-o
 ## Remaining milestones
 
 See [the completion roadmap](completion-plan.md) for acceptance criteria and status. Repeated comparisons retain raw samples, failure status, metadata, aggregate tables and exported charts; [findings](benchmark-results.md) describe the tested host and limitations. Native Linux x86_64/ARM64, macOS ARM64 and Linux containers pass the [platform and reliability checks](portability.md); documentation/release acceptance is next. Qualcomm QNN/FastRPC integration requires supported hardware and SDK access; CPU simulator measurements cannot establish NPU behavior.
+
+## Design decisions and tradeoffs
+
+| Decision | Benefit | Cost or limit |
+|---|---|---|
+| One sender and one receiver per client | Complete request frames cannot interleave; one owner matches replies | FIFO preparation can delay later socket calls behind a pooled slot wait |
+| Sync waits on the async transport | One framing, timeout and error implementation | Sync still pays thread/future bookkeeping; async alone does not imply parallel compute |
+| Reject at bounded capacities | Predictable request-count limits and explicit overload | Counts do not bound bytes; large tensors need smaller capacities |
+| One active connection per server | Straightforward mapping, shutdown and execution ownership | An idle client can occupy the server; no fair multi-client service |
+| Optional per-request SHM | Independent validated mappings and small control messages | Fresh allocation/map/storage reservation on every call can dominate small tensors |
+| Registered 1/2/4-slot pools | Setup amortized over reuse; explicit generations prevent accidental early reuse | Startup and retained backing memory increase; input/output/backend vector copies remain |
+| Keep frame version 1 with additive types/flags | Existing untimed socket encoding remains valid | No capability negotiation, fallback or promise that an older peer accepts newer features |
+| Request-local remote errors; connection-wide protocol failures | Valid rejected work does not poison unrelated calls | Corrupt/disconnected peers fail all unresolved calls; no automatic retry or cancellation |
+
+These choices suit a same-user teaching runtime. A service for untrusted users
+would need different isolation, admission/memory accounting and scheduling.
+The [hardware extension note](backend-extension.md) describes the additional
+contract required for model graphs and device-owned buffers.

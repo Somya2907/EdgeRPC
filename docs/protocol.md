@@ -1,6 +1,6 @@
 # Wire protocol, version 1
 
-Local `AF_UNIX` / `SOCK_STREAM` connections carry consecutive frames. Each frame has a 28-byte header followed by exactly `payload_size` bytes. There is no C++ struct padding on the wire. All integer fields and IEEE-754 binary32 tensor values use **big-endian** byte order.
+Local `AF_UNIX` / `SOCK_STREAM` connections carry consecutive frames. Each frame has a 28-byte header followed by exactly `payload_size` bytes. There is no C++ struct padding on the wire. Frame/descriptor integers and socket tensor payloads use **big-endian** byte order. Mapped SHM tensors use native-endian float32 on the same host.
 
 | Offset | Bytes | Field | Values |
 |---|---:|---|---|

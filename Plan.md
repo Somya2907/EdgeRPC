@@ -1,5 +1,10 @@
 # EdgeRPC — Complete Build Plan (macOS / Apple Silicon)
 
+This is the original design and session plan, retained as a planning reference.
+Its unchecked boxes and starter commands are historical. For implemented scope
+and acceptance results, see [the completion roadmap](docs/completion-plan.md),
+[current quick start](docs/quickstart.md) and [release notes](docs/release-notes.md).
+
 > **Project:** EdgeRPC — A Low-Latency RPC Runtime for Simulated Heterogeneous AI Inference  
 > **Target machine:** Apple Silicon Mac (including MacBook Air M4)  
 > **Primary language:** C++17 (C++20 optional)  

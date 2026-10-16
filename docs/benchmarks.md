@@ -7,10 +7,12 @@ Both endpoints are CPU processes running deterministic float32 compute (`2*x+1`)
 Build Release with sanitizers disabled. The runtime and CSV analysis have no third-party dependencies. Charts additionally require Matplotlib:
 
 ```sh
-cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DEDGERPC_SANITIZERS=OFF
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release \
+  -DEDGERPC_SANITIZERS=OFF -DEDGERPC_THREAD_SANITIZER=OFF
 cmake --build build --parallel 4
-python3 -m pip install -r benchmarks/requirements.txt
-python3 scripts/run_comparisons.py
+python3 -m venv .venv
+.venv/bin/python -m pip install -r benchmarks/requirements.txt
+.venv/bin/python scripts/run_comparisons.py
 ```
 
 In the prepared cloud environment, activate `/workspace/.edgerpc-tools/bin` first. Defaults are:
