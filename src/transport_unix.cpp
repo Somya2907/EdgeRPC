@@ -120,6 +120,14 @@ bool read_exact(int fd, void* data, std::size_t bytes, Timeout timeout, IoCounte
 
 void write_all(int fd, const void* data, std::size_t bytes, Timeout timeout, IoCounters* counters) {
     const auto deadline = deadline_for(timeout);
+#ifdef __APPLE__
+    // Darwin's sosendcheck tests SS_NBIO/MSG_NBIO for buffer-space waits;
+    // MSG_DONTWAIT alone only makes its buffer lock nonblocking. Keep the
+    // descriptor nonblocking so a full socket cannot outlive our deadline.
+    const int descriptor_flags = ::fcntl(fd, F_GETFL, 0);
+    if (descriptor_flags < 0 || (!(descriptor_flags & O_NONBLOCK) &&
+        ::fcntl(fd, F_SETFL, descriptor_flags | O_NONBLOCK) < 0)) system_failure("fcntl nonblocking write");
+#endif
     const auto* in = static_cast<const std::uint8_t*>(data);
     int flags = MSG_DONTWAIT;
 #ifdef MSG_NOSIGNAL

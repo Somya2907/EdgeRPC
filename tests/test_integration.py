@@ -34,9 +34,7 @@ class SharedRegion:
     libc = ctypes.CDLL(None, use_errno=True)
     # Darwin's third argument is variadic. Apple Silicon passes variadic values
     # on the stack, so declaring all three fixed silently corrupts creation mode.
-    libc.shm_open.argtypes = [ctypes.c_char_p, ctypes.c_int]
-    if sys.platform != 'darwin':
-        libc.shm_open.argtypes.append(ctypes.c_uint)
+    libc.shm_open.argtypes = [ctypes.c_char_p, ctypes.c_int] + ([] if sys.platform == 'darwin' else [ctypes.c_uint])
     libc.shm_open.restype = ctypes.c_int
     libc.shm_unlink.argtypes = [ctypes.c_char_p]
     libc.shm_unlink.restype = ctypes.c_int
