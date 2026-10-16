@@ -34,3 +34,17 @@ foreach(app edgerpc_server edgerpc_demo edgerpc_benchmark)
     target_include_directories(${app} PRIVATE apps)
     target_compile_options(${app} PRIVATE -Wall -Wextra -Wpedantic)
 endforeach()
+
+include(CTest)
+if(BUILD_TESTING)
+    add_executable(test_protocol tests/test_protocol.cpp)
+    target_link_libraries(test_protocol PRIVATE edgerpc)
+    target_compile_options(test_protocol PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME protocol COMMAND test_protocol)
+    find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME integration COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_integration.py
+        --bin-dir $<TARGET_FILE_DIR:edgerpc_server>)
+    set_tests_properties(protocol PROPERTIES TIMEOUT 20)
+    set_tests_properties(integration PROPERTIES TIMEOUT 90)
+endif()
