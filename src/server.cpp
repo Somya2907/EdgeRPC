@@ -104,10 +104,11 @@ void execute_request(const std::shared_ptr<Connection>& connection,
             response.header = request.header;
             response.header.type = MessageType::Response;
             try {
-                const auto execute_begin = registered ? monotonic_ns() : 0;
+                const bool timed = request.header.flags & kTraceFlag;
+                const auto execute_begin = (registered || timed) ? monotonic_ns() : 0;
                 const auto input = shared ? shared->read_tensor(descriptor.input_offset, descriptor.elements)
                                           : decode_tensor(request.payload);
-                const auto output = backend.execute(input, static_cast<Operation>(request.header.flags));
+                const auto output = backend.execute(input, static_cast<Operation>(request.header.flags & ~kTraceFlag));
                 if (output.size() != input.size()) throw std::runtime_error("backend output size mismatch");
                 if (registered) {
                     shared->write_tensor(descriptor.output_offset, output);
@@ -120,6 +121,12 @@ void execute_request(const std::shared_ptr<Connection>& connection,
                     response.header.type = MessageType::ShmResponse;
                     response.header.payload_size = 0;
                 } else response.payload = encode_tensor(output);
+                if (timed && !registered) {
+                    const auto trace = encode_execution_trace({queued_ns, execute_begin, monotonic_ns()});
+                    response.payload.insert(response.payload.begin(), trace.begin(), trace.end());
+                    response.header.type = shared ? MessageType::TimedShmResponse : MessageType::TimedResponse;
+                    response.header.payload_size = static_cast<std::uint32_t>(response.payload.size());
+                }
             } catch (...) {
                 response = error_frame(request.header, Status::InternalError, "execution backend failed");
             }
@@ -171,7 +178,7 @@ void serve_connection(int fd, ExecutionBackend& backend, const ServerOptions& op
             if ((header.type != MessageType::Request && header.type != MessageType::ShmRequest &&
                  header.type != MessageType::PooledRequest) ||
                 header.status != Status::Ok ||
-                header.request_id == 0 || header.flags > static_cast<std::uint32_t>(Operation::Compute) ||
+                header.request_id == 0 || (header.flags & ~kTraceFlag) > static_cast<std::uint32_t>(Operation::Compute) ||
                 (header.type == MessageType::Request && request.payload.size() % 4 != 0)) {
                 connection->send(error_frame(header, Status::InvalidRequest, "invalid request metadata or tensor size"));
                 continue;
@@ -217,7 +224,7 @@ void serve_connection(int fd, ExecutionBackend& backend, const ServerOptions& op
                     continue;
                 }
             }
-            const auto queued_ns = registered ? monotonic_ns() : 0;
+            const auto queued_ns = (registered || (header.flags & kTraceFlag)) ? monotonic_ns() : 0;
             ++connection->outstanding;
             if (!pool.try_submit([connection, &backend, request = std::move(request), shared, descriptor, registered, reference, queued_ns] {
                 execute_request(connection, backend, request, shared, descriptor, registered, reference, queued_ns);

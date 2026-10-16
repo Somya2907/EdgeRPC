@@ -13,11 +13,12 @@ int main(int argc, char** argv) {
     try {
         edgerpc::cli::Arguments args(argc, argv,
             {"--socket", "--mode", "--size-kib", "--inflight", "--requests", "--warmup",
-             "--csv", "--workers", "--buffer-slots", "--prepare-us", "--workload", "--timeout-ms"}, {"--help"});
+             "--csv", "--workers", "--buffer-slots", "--prepare-us", "--workload", "--timeout-ms", "--instrumentation", "--delay-us"}, {"--help"});
         if (args.has("--help")) {
             std::cout << "Usage: edgerpc_benchmark [--socket PATH] [--mode socket-sync|socket-async|shm-async|shm-double-buffer] "
                          "[--size-kib 64] [--inflight 1] [--workers 1] [--requests 1000] [--warmup 100] "
-                         "[--buffer-slots 1|2|4] [--prepare-us 0] [--workload compute|noop] [--csv FILE] [--timeout-ms 5000]\n";
+                         "[--buffer-slots 1|2|4] [--prepare-us 0] [--instrumentation on|off] [--delay-us 0] "
+                         "[--workload compute|noop] [--csv FILE] [--timeout-ms 5000]\n";
             return 0;
         }
         const auto mode = args.get("--mode", "socket-sync");
@@ -28,6 +29,10 @@ int main(int argc, char** argv) {
             mode == "shm-async" ? edgerpc::TensorTransport::SharedMemory : edgerpc::TensorTransport::Socket;
         const auto inflight = args.number("--inflight", pooled ? 2 : 1, 1, mode == "socket-sync" ? 1 : 1024);
         const auto workers = args.number("--workers", 1, 1, 16);
+        const auto delay_us = args.number("--delay-us", 0, 0, 1000000); // Declaration; runner sets the server too.
+        const auto instrumentation = args.get("--instrumentation", "on");
+        if (instrumentation != "on" && instrumentation != "off") throw std::invalid_argument("instrumentation must be on|off");
+        const bool timed = instrumentation == "on";
         const auto size_kib = args.number("--size-kib", 64, 0, edgerpc::kMaxPayloadBytes / 1024);
         const auto requests = args.number("--requests", 1000, 1, 1000000);
         const auto warmup = args.number("--warmup", 100, 0, 1000000);
@@ -49,11 +54,12 @@ int main(int argc, char** argv) {
             if (!csv) throw std::runtime_error("cannot open CSV output");
             csv << "run_id,mode,tensor_bytes,inflight,workers,buffer_slots,request_id,status,latency_us,"
                    "queue_us,execute_us,buffer_wait_us,workload,slot,generation,prepare_begin_ns,prepare_end_ns,"
-                   "queued_ns,execute_begin_ns,execute_end_ns\n";
+                   "queued_ns,execute_begin_ns,execute_end_ns,instrumented,delay_us,prepare_delay_us\n";
         }
         const auto init_begin = std::chrono::steady_clock::now();
-        edgerpc::EdgeRpcClient client(args.get("--socket", "/tmp/edgerpc.sock"), timeout, inflight, pool);
+        edgerpc::EdgeRpcClient client(args.get("--socket", "/tmp/edgerpc.sock"), timeout, inflight, pool, timed);
         const auto initialization_us = std::chrono::duration<double, std::micro>(std::chrono::steady_clock::now() - init_begin).count();
+        const auto initialization_traffic = client.traffic();
         using Clock = std::chrono::steady_clock;
         struct Sample { std::uint64_t id; double latency_us; edgerpc::PipelineTrace pipeline; };
         std::vector<Sample> samples;
@@ -62,8 +68,10 @@ int main(int argc, char** argv) {
         latencies.reserve(requests);
         const auto run_id = std::to_string(std::chrono::duration_cast<std::chrono::microseconds>(
             std::chrono::system_clock::now().time_since_epoch()).count()) + "_" + std::to_string(::getpid());
+        double first_request_us = 0;
         auto collect = [&](const edgerpc::Response& response, Clock::time_point start, bool measured) {
             const double elapsed = std::chrono::duration<double, std::micro>(response.completed_at - start).count();
+            if (first_request_us == 0) first_request_us = elapsed;
             edgerpc::cli::verify(input, response.output, operation);
             if (measured) {
                 samples.push_back({response.id, elapsed, response.pipeline});
@@ -93,9 +101,11 @@ int main(int argc, char** argv) {
             }
         };
         run(warmup, false);
+        const auto warm_traffic = client.traffic();
         const auto wall_start = Clock::now();
         run(requests, true);
         const double seconds = std::chrono::duration<double>(Clock::now() - wall_start).count();
+        const auto final_traffic = client.traffic();
         const auto summary = edgerpc::summarize_latencies(std::move(latencies));
         if (csv.is_open()) {
             csv << std::fixed << std::setprecision(3);
@@ -103,25 +113,32 @@ int main(int argc, char** argv) {
                 csv << run_id << ',' << mode << ',' << size_kib * 1024 << ',' << inflight << ',' << workers
                     << ',' << pool.slots << ',' << sample.id << ",0," << sample.latency_us << ',';
                 const auto& trace = sample.pipeline;
-                if (pooled) csv << (trace.execute_begin_ns - trace.queued_ns) / 1000.0 << ','
+                if (timed || pooled) csv << (trace.execute_begin_ns - trace.queued_ns) / 1000.0 << ','
                                 << (trace.execute_end_ns - trace.execute_begin_ns) / 1000.0 << ',' << trace.buffer_wait_us;
                 else csv << ",,";
                 csv << ',' << args.get("--workload", "compute") << ',';
-                if (pooled) csv << trace.slot << ',' << trace.generation << ',' << trace.prepare_begin_ns << ','
+                if (timed || pooled) csv << trace.slot << ',' << trace.generation << ',' << trace.prepare_begin_ns << ','
                                 << trace.prepare_end_ns << ',' << trace.queued_ns << ','
                                 << trace.execute_begin_ns << ',' << trace.execute_end_ns;
                 else csv << ",,,,,,";
-                csv << '\n';
+                csv << ',' << (timed ? 1 : 0) << ',' << delay_us << ',' << pool.prepare_delay.count() << '\n';
             }
             csv.flush();
             if (!csv) throw std::runtime_error("failed writing CSV output");
         }
         std::cout << std::fixed << std::setprecision(3)
-                  << "completed=" << requests << " failures=0 warmup=" << warmup
+                  << "run_id=" << run_id << " completed=" << requests << " failures=0 warmup=" << warmup
                   << " mode=" << mode << " tensor_bytes=" << size_kib * 1024
                   << " inflight=" << inflight << " workers=" << workers
                   << " buffer_slots=" << pool.slots << " prepare_us=" << pool.prepare_delay.count()
                   << " initialization_us=" << initialization_us
+                  << " first_request_us=" << first_request_us << " measured_seconds=" << std::setprecision(9) << seconds << std::setprecision(3)
+                  << " instrumented=" << (timed ? 1 : 0) << " delay_us=" << delay_us
+                  << " initialization_tx_bytes=" << initialization_traffic.sent << " initialization_rx_bytes=" << initialization_traffic.received
+                  << " warmup_tx_bytes=" << warm_traffic.sent - initialization_traffic.sent
+                  << " warmup_rx_bytes=" << warm_traffic.received - initialization_traffic.received
+                  << " socket_tx_bytes=" << final_traffic.sent - warm_traffic.sent
+                  << " socket_rx_bytes=" << final_traffic.received - warm_traffic.received
                   << " p50_us=" << summary.p50_us << " p95_us=" << summary.p95_us
                   << " p99_us=" << summary.p99_us << " throughput_rps=" << requests / seconds << '\n';
         return 0;

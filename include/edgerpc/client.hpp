@@ -34,7 +34,7 @@ private:
 class EdgeRpcClient {
 public:
     explicit EdgeRpcClient(const std::string& path, Timeout timeout = kDefaultTimeout,
-                           std::size_t max_pending = 32, PoolOptions pool = {});
+                           std::size_t max_pending = 32, PoolOptions pool = {}, bool collect_metrics = false);
     ~EdgeRpcClient();
     EdgeRpcClient(const EdgeRpcClient&) = delete;
     EdgeRpcClient& operator=(const EdgeRpcClient&) = delete;
@@ -44,6 +44,8 @@ public:
                                      TensorTransport transport = TensorTransport::Socket);
     // Reject new calls, fail pending calls, interrupt I/O, and join owned threads.
     void close();
+    // Cumulative application socket bytes, including control, warm-up and partial I/O.
+    SocketTraffic traffic() const noexcept;
 private:
     struct State;
     std::unique_ptr<State> state_;

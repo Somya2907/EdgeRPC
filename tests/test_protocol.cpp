@@ -172,6 +172,60 @@ void percentile_metrics() {
     must_throw([] { edgerpc::summarize_latencies({}); });
 }
 
+void timed_trace_contract() {
+    const auto bytes = edgerpc::encode_execution_trace({1, 256, 65536});
+    check(bytes.size() == 24 && bytes[7] == 1 && bytes[14] == 1 && bytes[21] == 1, "trace byte order");
+    check(edgerpc::decode_execution_trace(bytes).execute_end_ns == 65536, "trace round trip");
+    for (const auto trace : std::vector<edgerpc::ExecutionTrace>{{0,1,2}, {2,1,3}, {1,3,2}})
+        must_throw([&] { edgerpc::encode_execution_trace(trace); });
+    auto bad = bytes;
+    bad[7] = 255; bad[15] = 0; bad[14] = 0;
+    must_throw([&] { edgerpc::decode_execution_trace(bad); });
+    bad.pop_back();
+    must_throw([&] { edgerpc::decode_execution_trace(bad); });
+    edgerpc::Header header;
+    header.type = edgerpc::MessageType::TimedResponse;
+    for (const auto size : {24U, edgerpc::kMaxPayloadBytes + 24}) {
+        header.payload_size = size;
+        edgerpc::encode_header(header);
+    }
+    for (const auto size : {0U,23U,25U,edgerpc::kMaxPayloadBytes + 28}) {
+        header.payload_size = size;
+        must_throw([&] { edgerpc::encode_header(header); });
+    }
+    header.type = edgerpc::MessageType::TimedShmResponse;
+    header.payload_size = 24;
+    edgerpc::encode_header(header);
+    header.payload_size = 28;
+    must_throw([&] { edgerpc::encode_header(header); });
+}
+
+void measured_socket_traffic() {
+    auto pair = sockets();
+    edgerpc::IoCounters writer, reader;
+    const char data[] = "abc";
+    edgerpc::write_all(pair[0].get(), data, 3, edgerpc::kDefaultTimeout, &writer);
+    pair[0].reset();
+    char buffer[8]{};
+    must_throw([&] { edgerpc::read_exact(pair[1].get(), buffer, sizeof(buffer), edgerpc::kDefaultTimeout, &reader); });
+    check(writer.snapshot().sent == 3 && reader.snapshot().received == 3, "partial failed I/O must be counted");
+    check(writer.snapshot().received == 0 && reader.snapshot().sent == 0, "byte directions mixed");
+    auto blocked = sockets();
+    edgerpc::IoCounters partial;
+    const std::vector<std::uint8_t> large(1024 * 1024);
+    must_throw([&] { edgerpc::write_all(blocked[0].get(), large.data(), large.size(), edgerpc::Timeout{20}, &partial); });
+    check(partial.snapshot().sent > 0 && partial.snapshot().sent < large.size(), "partial write counter lost progress");
+    ::shutdown(blocked[0].get(), SHUT_WR);
+    std::size_t drained = 0;
+    for (;;) {
+        const auto count = ::recv(blocked[1].get(), buffer, sizeof(buffer), 0);
+        check(count >= 0, "drain failed");
+        if (count == 0) break;
+        drained += count;
+    }
+    check(drained == partial.snapshot().sent, "counter differs from actual delivered bytes");
+}
+
 } // namespace
 
 int main() {
@@ -180,7 +234,8 @@ int main() {
         {"tensor wire format", tensor_wire_format}, {"fragmented frames", fragmented_frames},
         {"large partial writes", large_partial_writes}, {"EOF and disconnect", eof_and_disconnect},
         {"timeouts and validation", timeouts_and_validation}, {"mock backend", mock_backend},
-        {"percentile metrics", percentile_metrics}};
+        {"percentile metrics", percentile_metrics}, {"timed trace contract", timed_trace_contract},
+        {"measured socket traffic", measured_socket_traffic}};
     std::size_t failures = 0;
     for (const auto& item : cases) {
         try { item.second(); std::cout << "PASS " << item.first << '\n'; }

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(EdgeRPC VERSION 0.4.0 LANGUAGES CXX)
+project(EdgeRPC VERSION 0.5.0 LANGUAGES CXX)
 
 if(NOT UNIX)
     message(FATAL_ERROR "EdgeRPC requires POSIX Unix domain sockets (macOS or Linux).")

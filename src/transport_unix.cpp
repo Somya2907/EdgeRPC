@@ -95,14 +95,18 @@ UniqueFd connect_unix(const std::string& path, Timeout timeout) {
     return fd;
 }
 
-bool read_exact(int fd, void* data, std::size_t bytes, Timeout timeout) {
+bool read_exact(int fd, void* data, std::size_t bytes, Timeout timeout, IoCounters* counters) {
     const auto deadline = deadline_for(timeout);
     auto* out = static_cast<std::uint8_t*>(data);
     std::size_t received = 0;
     while (received < bytes) {
         if (Clock::now() >= deadline) throw std::runtime_error("socket read timed out");
         const auto count = ::recv(fd, out + received, bytes - received, MSG_DONTWAIT);
-        if (count > 0) { received += static_cast<std::size_t>(count); continue; }
+        if (count > 0) {
+            received += static_cast<std::size_t>(count);
+            if (counters) counters->received.fetch_add(count, std::memory_order_relaxed);
+            continue;
+        }
         if (count == 0) {
             if (received == 0) return false;
             throw ProtocolError("disconnected in the middle of a frame");
@@ -114,7 +118,7 @@ bool read_exact(int fd, void* data, std::size_t bytes, Timeout timeout) {
     return true;
 }
 
-void write_all(int fd, const void* data, std::size_t bytes, Timeout timeout) {
+void write_all(int fd, const void* data, std::size_t bytes, Timeout timeout, IoCounters* counters) {
     const auto deadline = deadline_for(timeout);
     const auto* in = static_cast<const std::uint8_t*>(data);
     int flags = MSG_DONTWAIT;
@@ -131,7 +135,11 @@ void write_all(int fd, const void* data, std::size_t bytes, Timeout timeout) {
     while (sent < bytes) {
         if (Clock::now() >= deadline) throw std::runtime_error("socket write timed out");
         const auto count = ::send(fd, in + sent, bytes - sent, flags);
-        if (count > 0) { sent += static_cast<std::size_t>(count); continue; }
+        if (count > 0) {
+            sent += static_cast<std::size_t>(count);
+            if (counters) counters->sent.fetch_add(count, std::memory_order_relaxed);
+            continue;
+        }
         if (count == 0) throw std::runtime_error("socket write made no progress");
         if (errno == EINTR) continue;
         if (errno == EAGAIN || errno == EWOULDBLOCK) { wait_io(fd, POLLOUT, deadline); continue; }
@@ -139,24 +147,24 @@ void write_all(int fd, const void* data, std::size_t bytes, Timeout timeout) {
     }
 }
 
-bool receive_frame(int fd, Frame& frame, Timeout timeout) {
+bool receive_frame(int fd, Frame& frame, Timeout timeout, IoCounters* counters) {
     std::array<std::uint8_t, kHeaderBytes> bytes{};
-    if (!read_exact(fd, bytes.data(), bytes.size(), timeout)) return false;
+    if (!read_exact(fd, bytes.data(), bytes.size(), timeout, counters)) return false;
     // Validate the advertised length before any payload allocation.
     const auto header = decode_header(bytes);
     std::vector<std::uint8_t> payload(header.payload_size);
-    if (!payload.empty() && !read_exact(fd, payload.data(), payload.size(), timeout))
+    if (!payload.empty() && !read_exact(fd, payload.data(), payload.size(), timeout, counters))
         throw ProtocolError("disconnected before frame payload");
     frame = {header, std::move(payload)};
     return true;
 }
 
-void send_frame(int fd, const Frame& frame, Timeout timeout) {
+void send_frame(int fd, const Frame& frame, Timeout timeout, IoCounters* counters) {
     if (frame.payload.size() != frame.header.payload_size)
         throw ProtocolError("header and payload lengths differ");
     const auto bytes = encode_header(frame.header);
-    write_all(fd, bytes.data(), bytes.size(), timeout);
-    write_all(fd, frame.payload.data(), frame.payload.size(), timeout);
+    write_all(fd, bytes.data(), bytes.size(), timeout, counters);
+    write_all(fd, frame.payload.data(), frame.payload.size(), timeout, counters);
 }
 
 UnixListener::UnixListener(const std::string& path) {

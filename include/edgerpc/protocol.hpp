@@ -14,10 +14,12 @@ constexpr std::uint16_t kVersion = 1;
 constexpr std::size_t kHeaderBytes = 28;
 constexpr std::uint32_t kMaxPayloadBytes = 8 * 1024 * 1024;
 constexpr std::size_t kMaxElements = kMaxPayloadBytes / 4;
+constexpr std::uint32_t kTraceFlag = 0x100;
 
 enum class MessageType : std::uint16_t {
     Request = 1, Response = 2, Error = 3, ShmRequest = 4, ShmResponse = 5,
-    RegisterBuffer = 6, RegisterAck = 7, PooledRequest = 8, PooledResponse = 9
+    RegisterBuffer = 6, RegisterAck = 7, PooledRequest = 8, PooledResponse = 9,
+    TimedResponse = 10, TimedShmResponse = 11
 };
 enum class Operation : std::uint32_t { Noop = 0, Compute = 1 };
 enum class TensorTransport { Socket, SharedMemory, SharedPool };
@@ -74,6 +76,14 @@ struct PoolCompletion {
     std::uint64_t execute_begin_ns = 0;
     std::uint64_t execute_end_ns = 0;
 };
+
+struct ExecutionTrace {
+    std::uint64_t queued_ns = 0;
+    std::uint64_t execute_begin_ns = 0;
+    std::uint64_t execute_end_ns = 0;
+};
+std::vector<std::uint8_t> encode_execution_trace(const ExecutionTrace& trace);
+ExecutionTrace decode_execution_trace(const std::vector<std::uint8_t>& bytes);
 
 std::vector<std::uint8_t> encode_registration(const BufferRegistration& registration);
 BufferRegistration decode_registration(const std::vector<std::uint8_t>& bytes);

@@ -21,6 +21,7 @@ struct EdgeRpcClient::State {
         Operation operation;
         TensorTransport transport;
         bool ready_for_reply = false;
+        bool send_complete = false;
         std::shared_ptr<SharedBuffer> shared;
         SharedDescriptor descriptor;
         std::optional<BufferLease> lease;
@@ -36,6 +37,8 @@ struct EdgeRpcClient::State {
     Timeout timeout;
     const std::size_t capacity;
     const PoolOptions pool_options;
+    const bool collect_metrics;
+    IoCounters counters;
     std::shared_ptr<BufferPool> pool;
     std::mutex mutex;
     std::mutex close_mutex;
@@ -49,8 +52,8 @@ struct EdgeRpcClient::State {
     std::thread sender;
     std::thread receiver;
 
-    State(const std::string& path, Timeout io_timeout, std::size_t max_pending, PoolOptions options)
-        : socket(connect_unix(path, io_timeout)), timeout(io_timeout), capacity(max_pending), pool_options(options) {
+    State(const std::string& path, Timeout io_timeout, std::size_t max_pending, PoolOptions options, bool metrics)
+        : socket(connect_unix(path, io_timeout)), timeout(io_timeout), capacity(max_pending), pool_options(options), collect_metrics(metrics) {
         if (capacity == 0 || capacity > 1024) throw std::invalid_argument("max_pending must be 1..1024");
         if (options.prepare_delay.count() < 0 || options.prepare_delay.count() > 1000000 ||
             (options.slots == 0 && (options.max_elements != 0 || options.prepare_delay.count() != 0)))
@@ -61,9 +64,9 @@ struct EdgeRpcClient::State {
                 Frame registration;
                 registration.header = {MessageType::RegisterBuffer, next_id++, 74, Status::Ok, 0};
                 registration.payload = encode_registration({slot, pool->descriptor(slot)});
-                send_frame(socket.get(), registration, timeout);
+                send_frame(socket.get(), registration, timeout, &counters);
                 Frame ack;
-                if (!receive_frame(socket.get(), ack, timeout)) throw ProtocolError("disconnected during registration");
+                if (!receive_frame(socket.get(), ack, timeout, &counters)) throw ProtocolError("disconnected during registration");
                 if (ack.header.request_id != registration.header.request_id || ack.header.flags != 0)
                     throw ProtocolError("registration response mismatch");
                 if (ack.header.type == MessageType::Error && ack.header.status != Status::Ok)
@@ -167,9 +170,10 @@ struct EdgeRpcClient::State {
                 }
                 Frame request;
                 request.header.request_id = submission.pending->id;
-                request.header.flags = static_cast<std::uint32_t>(submission.pending->operation);
+                request.header.flags = static_cast<std::uint32_t>(submission.pending->operation) | (collect_metrics ? kTraceFlag : 0);
                 std::optional<BufferLease> lease;
                 PipelineTrace trace;
+                if (collect_metrics) trace.prepare_begin_ns = monotonic_ns();
                 try {
                     std::shared_ptr<SharedBuffer> shared;
                     SharedDescriptor descriptor;
@@ -198,6 +202,7 @@ struct EdgeRpcClient::State {
                         request.header.type = MessageType::ShmRequest;
                         request.payload = encode_shared_descriptor(descriptor);
                     } else request.payload = encode_tensor(submission.input);
+                    if (collect_metrics) trace.prepare_end_ns = monotonic_ns();
                     request.header.payload_size = static_cast<std::uint32_t>(request.payload.size());
                     {
                         std::lock_guard<std::mutex> lock(mutex);
@@ -220,7 +225,12 @@ struct EdgeRpcClient::State {
                     continue;
                 }
                 changed.notify_all();
-                send_frame(socket.get(), request, timeout);
+                send_frame(socket.get(), request, timeout, &counters);
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    submission.pending->send_complete = true;
+                }
+                changed.notify_all();
             }
         } catch (...) { fail(std::current_exception()); }
     }
@@ -234,7 +244,7 @@ struct EdgeRpcClient::State {
                     if (stopped) return;
                 }
                 Frame frame;
-                if (!receive_frame(socket.get(), frame, timeout))
+                if (!receive_frame(socket.get(), frame, timeout, &counters))
                     throw std::runtime_error("server disconnected before response");
                 std::shared_ptr<Pending> call;
                 std::shared_ptr<SharedBuffer> shared;
@@ -253,7 +263,7 @@ struct EdgeRpcClient::State {
                     lease = call->lease;
                     trace = call->trace;
                 }
-                if (frame.header.flags != static_cast<std::uint32_t>(call->operation))
+                if (frame.header.flags != (static_cast<std::uint32_t>(call->operation) | (collect_metrics ? kTraceFlag : 0)))
                     throw ProtocolError("response operation mismatch");
                 std::exception_ptr remote_error;
                 Response response{call->id, {}, frame.header.status};
@@ -265,9 +275,19 @@ struct EdgeRpcClient::State {
                         std::string(frame.payload.begin(), frame.payload.end())));
                 } else {
                     const auto expected = call->transport == TensorTransport::SharedPool ? MessageType::PooledResponse :
-                        call->transport == TensorTransport::SharedMemory ? MessageType::ShmResponse : MessageType::Response;
+                        call->transport == TensorTransport::SharedMemory ?
+                            (collect_metrics ? MessageType::TimedShmResponse : MessageType::ShmResponse) :
+                            (collect_metrics ? MessageType::TimedResponse : MessageType::Response);
                     if (frame.header.type != expected || frame.header.status != Status::Ok)
                         throw ProtocolError("unexpected response type or status");
+                    if (collect_metrics && call->transport != TensorTransport::SharedPool) {
+                        if (frame.payload.size() < 24) throw ProtocolError("missing execution trace");
+                        const auto execution = decode_execution_trace({frame.payload.begin(), frame.payload.begin() + 24});
+                        trace.queued_ns = execution.queued_ns;
+                        trace.execute_begin_ns = execution.execute_begin_ns;
+                        trace.execute_end_ns = execution.execute_end_ns;
+                        frame.payload.erase(frame.payload.begin(), frame.payload.begin() + 24);
+                    }
                     if (call->transport == TensorTransport::SharedPool) {
                         if (!lease) throw ProtocolError("missing pool lease");
                         const auto completion = decode_pool_completion(frame.payload);
@@ -279,7 +299,6 @@ struct EdgeRpcClient::State {
                         trace.execute_end_ns = completion.execute_end_ns;
                         pool->mark_ready(*lease);
                         response.output = lease->buffer->read_tensor(lease->output_offset, call->elements);
-                        response.pipeline = trace;
                     } else if (call->transport == TensorTransport::SharedMemory) {
                         if (!shared || !frame.payload.empty()) throw ProtocolError("invalid SHM completion");
                         response.output = shared->read_tensor(descriptor.output_offset, call->elements);
@@ -288,9 +307,12 @@ struct EdgeRpcClient::State {
                             throw ProtocolError("response tensor size mismatch");
                         response.output = decode_tensor(frame.payload);
                     }
+                    response.pipeline = trace;
                 }
                 {
-                    std::lock_guard<std::mutex> lock(mutex);
+                    std::unique_lock<std::mutex> lock(mutex);
+                    // Quiescent snapshots after futures settle must include the full send.
+                    changed.wait(lock, [&] { return stopped || call->send_complete; });
                     if (stopped) return;
                     if (lease) {
                         if (remote_error) pool->mark_ready(*lease);
@@ -310,10 +332,11 @@ struct EdgeRpcClient::State {
     }
 };
 
-EdgeRpcClient::EdgeRpcClient(const std::string& path, Timeout timeout, std::size_t max_pending, PoolOptions pool)
-    : state_(std::make_unique<State>(path, timeout, max_pending, pool)) {}
+EdgeRpcClient::EdgeRpcClient(const std::string& path, Timeout timeout, std::size_t max_pending, PoolOptions pool, bool collect_metrics)
+    : state_(std::make_unique<State>(path, timeout, max_pending, pool, collect_metrics)) {}
 EdgeRpcClient::~EdgeRpcClient() = default;
 void EdgeRpcClient::close() { state_->close(); }
+SocketTraffic EdgeRpcClient::traffic() const noexcept { return state_->counters.snapshot(); }
 std::future<Response> EdgeRpcClient::infer_async(std::vector<float> input, Operation operation, TensorTransport transport) {
     return state_->submit(std::move(input), operation, transport);
 }

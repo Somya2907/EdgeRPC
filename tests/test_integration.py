@@ -101,7 +101,7 @@ def exact(peer, length):
 
 def receive(peer):
     header = HEADER.unpack(exact(peer, HEADER.size))
-    if header[4] > MAX_BYTES:
+    if header[4] > MAX_BYTES + (24 if header[2] == 10 else 0):
         raise ValueError("response too large")
     return header, exact(peer, header[4])
 
@@ -585,12 +585,67 @@ class Integration(unittest.TestCase):
         self.assertEqual([int(row["request_id"]) for row in rows], list(range(5, 17)))
         self.assertTrue(all(row["status"] == "0" and row["tensor_bytes"] == "4096" for row in rows))
         self.assertTrue(all(math.isfinite(float(row["latency_us"])) and float(row["latency_us"]) > 0 for row in rows))
-        self.assertTrue(all(row["queue_us"] == row["execute_us"] == row["buffer_wait_us"] == "" for row in rows))
+        self.assertTrue(all(float(row["queue_us"]) >= 0 and float(row["execute_us"]) > 0 and
+                            float(row["buffer_wait_us"]) == 0 for row in rows))
         fields = dict(field.split("=", 1) for field in result.stdout.split())
         self.assertEqual(fields["completed"], "12")
         self.assertLessEqual(float(fields["p50_us"]), float(fields["p95_us"]))
         self.assertLessEqual(float(fields["p95_us"]), float(fields["p99_us"]))
         self.assertGreater(float(fields["throughput_rps"]), 0)
+        self.assertEqual(int(fields["socket_tx_bytes"]), 12 * (28 + 4096))
+        self.assertEqual(int(fields["socket_rx_bytes"]), 12 * (28 + 24 + 4096))
+
+    def test_instrumented_transport_stages_and_counters(self):
+        self.restart_server("--delay-us", "1000")
+        for mode in ("socket-sync", "socket-async", "shm-async", "shm-double-buffer"):
+            for instrumentation in ("on", "off"):
+                destination = Path(self.directory.name) / "metrics.csv"
+                options = ["--buffer-slots", "2"] if mode == "shm-double-buffer" else []
+                result = subprocess.run([str(BIN / "edgerpc_benchmark"), "--socket", str(self.path),
+                    "--mode", mode, "--inflight", "1" if mode == "socket-sync" else "4", "--size-kib", "4",
+                    "--warmup", "3", "--requests", "12", "--instrumentation", instrumentation,
+                    "--delay-us", "1000", "--csv", str(destination), *options],
+                    text=True, capture_output=True, check=True, timeout=10)
+                fields = dict(part.split("=", 1) for part in result.stdout.split())
+                with destination.open(newline="") as stream:
+                    rows = list(csv.DictReader(stream))
+                pooled = mode == "shm-double-buffer"
+                tx = 52 if pooled else 98 if mode == "shm-async" else 28 + 4096
+                rx = 76 if pooled else 28 + (0 if mode == "shm-async" else 4096) + (24 if instrumentation == "on" else 0)
+                for prefix, count in (("socket",12), ("warmup",3)):
+                    self.assertEqual(int(fields[prefix + "_tx_bytes"]), tx * count)
+                    self.assertEqual(int(fields[prefix + "_rx_bytes"]), rx * count)
+                self.assertEqual(int(fields["initialization_tx_bytes"]), 204 if pooled else 0)
+                self.assertEqual(int(fields["initialization_rx_bytes"]), 64 if pooled else 0)
+                self.assertGreater(float(fields["first_request_us"]), 0)
+                for row in rows:
+                    if instrumentation == "on" or pooled:
+                        p0,p1,q,e0,e1 = [int(row[field]) for field in ("prepare_begin_ns", "prepare_end_ns", "queued_ns", "execute_begin_ns", "execute_end_ns")]
+                        self.assertTrue(0 < p0 <= p1 <= q <= e0 <= e1)
+                        self.assertGreaterEqual(float(row["execute_us"]), 900)
+                    else:
+                        self.assertEqual(row["execute_us"], "")
+
+    def test_timed_independent_wire_boundaries_and_recovery(self):
+        with self.peer() as peer:
+            for elements in (0, 4, MAX_BYTES // 4):
+                peer.sendall(frame(struct.pack("!f", 2) * elements, flags=0x101, request_id=elements + 1))
+                header, payload = receive(peer)
+                self.assertEqual((header[2], header[5], header[6]), (10, 0, 0x101))
+                queued, begin, end = struct.unpack("!QQQ", payload[:24])
+                self.assertTrue(0 < queued <= begin <= end)
+                self.assertEqual(payload[24:], struct.pack("!f", 5) * elements)
+            peer.sendall(frame(flags=0x201))
+            self.assertEqual(receive(peer)[0][5], 1)
+            peer.sendall(frame(struct.pack("!f", 2), flags=1))
+            self.assertEqual(receive(peer)[0][2], 2)
+        with SharedRegion() as region, self.peer() as peer:
+            region.mapping[:16] = struct.pack("=4f", 1, 2, 3, 4)
+            peer.sendall(frame(region.descriptor(), kind=4, flags=0x101))
+            header, payload = receive(peer)
+            self.assertEqual((header[2], header[4], header[6]), (11, 24, 0x101))
+            self.assertTrue(0 < struct.unpack("!QQQ", payload)[0])
+            self.assertEqual(struct.unpack("=4f", region.mapping[16:32]), (3, 5, 7, 9))
 
     def test_clean_shutdown_and_restart(self):
         self.server.stop()

@@ -21,8 +21,13 @@ void validate(const Header& header) {
         header.type != MessageType::Error && header.type != MessageType::ShmRequest &&
         header.type != MessageType::ShmResponse && header.type != MessageType::RegisterBuffer &&
         header.type != MessageType::RegisterAck && header.type != MessageType::PooledRequest &&
-        header.type != MessageType::PooledResponse) throw ProtocolError("unknown message type");
-    if (header.payload_size > kMaxPayloadBytes) throw ProtocolError("payload exceeds 8 MiB limit");
+        header.type != MessageType::PooledResponse && header.type != MessageType::TimedResponse &&
+        header.type != MessageType::TimedShmResponse) throw ProtocolError("unknown message type");
+    const auto limit = kMaxPayloadBytes + (header.type == MessageType::TimedResponse ? 24U : 0U);
+    if (header.payload_size > limit) throw ProtocolError("payload exceeds tensor/control limit");
+    if ((header.type == MessageType::TimedResponse && (header.payload_size < 24 || header.payload_size % 4 != 0)) ||
+        (header.type == MessageType::TimedShmResponse && header.payload_size != 24))
+        throw ProtocolError("invalid timed response length");
     if (header.type == MessageType::ShmRequest && header.payload_size != kSharedDescriptorBytes)
         throw ProtocolError("SHM request must contain one descriptor");
     if (header.type == MessageType::ShmResponse && header.payload_size != 0)
@@ -153,6 +158,26 @@ std::vector<std::uint8_t> encode_slot_id(std::uint32_t slot) {
     auto* out = bytes.data();
     put(out, slot, 4);
     return bytes;
+}
+
+std::vector<std::uint8_t> encode_execution_trace(const ExecutionTrace& trace) {
+    if (trace.queued_ns == 0 || trace.execute_begin_ns < trace.queued_ns || trace.execute_end_ns < trace.execute_begin_ns)
+        throw ProtocolError("invalid execution timestamps");
+    std::vector<std::uint8_t> bytes(24);
+    auto* out = bytes.data();
+    put(out, trace.queued_ns, 8);
+    put(out, trace.execute_begin_ns, 8);
+    put(out, trace.execute_end_ns, 8);
+    return bytes;
+}
+
+ExecutionTrace decode_execution_trace(const std::vector<std::uint8_t>& bytes) {
+    if (bytes.size() != 24) throw ProtocolError("invalid execution trace length");
+    const auto* in = bytes.data();
+    ExecutionTrace trace{get(in, 8), get(in, 8), get(in, 8)};
+    if (trace.queued_ns == 0 || trace.execute_begin_ns < trace.queued_ns || trace.execute_end_ns < trace.execute_begin_ns)
+        throw ProtocolError("invalid execution timestamps");
+    return trace;
 }
 
 std::uint32_t decode_slot_id(const std::vector<std::uint8_t>& bytes) {

@@ -58,6 +58,7 @@ edgerpc::Frame request(int fd) {
 }
 
 void reply(int fd, const edgerpc::Frame& request) {
+    const auto begin = edgerpc::monotonic_ns();
     auto response = request;
     response.header.type = edgerpc::MessageType::Response;
     std::optional<edgerpc::SharedBuffer> shared;
@@ -69,13 +70,19 @@ void reply(int fd, const edgerpc::Frame& request) {
         shared->unlink_name();
         values = shared->read_tensor(descriptor.input_offset, descriptor.elements);
     } else values = edgerpc::decode_tensor(request.payload);
-    if (request.header.flags == 1) for (auto& value : values) value = value * 2.0f + 1.0f;
+    if ((request.header.flags & ~edgerpc::kTraceFlag) == 1) for (auto& value : values) value = value * 2.0f + 1.0f;
     if (shared) {
         shared->write_tensor(descriptor.output_offset, values);
         response.header.type = edgerpc::MessageType::ShmResponse;
         response.header.payload_size = 0;
         response.payload.clear();
     } else response.payload = edgerpc::encode_tensor(values);
+    if (request.header.flags & edgerpc::kTraceFlag) {
+        const auto trace = edgerpc::encode_execution_trace({begin, begin, edgerpc::monotonic_ns()});
+        response.payload.insert(response.payload.begin(), trace.begin(), trace.end());
+        response.header.type = shared ? edgerpc::MessageType::TimedShmResponse : edgerpc::MessageType::TimedResponse;
+    }
+    response.header.payload_size = static_cast<std::uint32_t>(response.payload.size());
     edgerpc::send_frame(fd, response, 2s);
 }
 
@@ -98,13 +105,13 @@ template<class Peer, class Client> void with_peer(Peer serve, Client exercise) {
     if (client_error) std::rethrow_exception(client_error);
 }
 
-void check_reversed_responses(edgerpc::TensorTransport transport, bool mixed = false) {
+void check_reversed_responses(edgerpc::TensorTransport transport, bool mixed = false, bool timed = false) {
     with_peer([](int fd) {
         std::vector<edgerpc::Frame> frames;
         for (int i = 0; i < 32; ++i) frames.push_back(request(fd));
         for (auto i = frames.rbegin(); i != frames.rend(); ++i) reply(fd, *i);
-    }, [transport, mixed](const std::string& path) {
-        edgerpc::EdgeRpcClient client(path);
+    }, [transport, mixed, timed](const std::string& path) {
+        edgerpc::EdgeRpcClient client(path, 2s, 32, {}, timed);
         std::vector<std::future<edgerpc::Response>> futures;
         for (int i = 0; i < 32; ++i) futures.push_back(client.infer_async({static_cast<float>(i)},
             edgerpc::Operation::Compute, mixed && i % 2 ? edgerpc::TensorTransport::Socket : transport));
@@ -115,6 +122,7 @@ void check_reversed_responses(edgerpc::TensorTransport transport, bool mixed = f
             const auto result = futures[i].get();
             check(result.output == std::vector<float>{2.0f * i + 1.0f}, "reply matched the wrong request");
             ids.insert(result.id);
+            if (timed) check(result.pipeline.queued_ns > 0, "missing timed reversed response trace");
             completions.push_back(result.completed_at);
         }
         check(ids.size() == 32, "request IDs collided");
@@ -597,6 +605,23 @@ void pooled_registration_failure_cleanup() {
     }
 }
 
+void invalid_timing_fails_pending() {
+    with_peer([](int fd) {
+        auto first = request(fd);
+        request(fd);
+        first.header.type = edgerpc::MessageType::TimedResponse;
+        first.payload.insert(first.payload.begin(), 24, 0); // Invalid zero timestamp prefix.
+        first.header.payload_size = static_cast<std::uint32_t>(first.payload.size());
+        edgerpc::send_frame(fd, first, 2s);
+    }, [](const std::string& path) {
+        edgerpc::EdgeRpcClient client(path, 2s, 32, {}, true);
+        auto first = client.infer_async({1}), second = client.infer_async({2});
+        ready(first); ready(second);
+        must_fail([&] { first.get(); });
+        must_fail([&] { second.get(); });
+    });
+}
+
 } // namespace
 
 int main() {
@@ -619,7 +644,10 @@ int main() {
         {"pooled remote error reclaims slot", pooled_remote_error_reclaims_slot},
         {"pooled concurrent callers", pooled_concurrent_callers},
         {"pooled mixed sizes and transports", pooled_mixed_sizes_and_transports},
-        {"pooled registration failure cleanup", pooled_registration_failure_cleanup}};
+        {"pooled registration failure cleanup", pooled_registration_failure_cleanup},
+        {"timed reversed socket replies", [] { check_reversed_responses(edgerpc::TensorTransport::Socket, false, true); }},
+        {"timed reversed SHM replies", [] { check_reversed_responses(edgerpc::TensorTransport::SharedMemory, true, true); }},
+        {"invalid timing fails pending", invalid_timing_fails_pending}};
     std::size_t failures = 0;
     for (const auto& item : cases) {
         try { item.second(); std::cout << "PASS " << item.first << '\n'; }
