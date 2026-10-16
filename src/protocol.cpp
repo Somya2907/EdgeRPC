@@ -18,8 +18,13 @@ std::uint64_t get(const std::uint8_t*& in, unsigned width) {
 
 void validate(const Header& header) {
     if (header.type != MessageType::Request && header.type != MessageType::Response &&
-        header.type != MessageType::Error) throw ProtocolError("unknown message type");
+        header.type != MessageType::Error && header.type != MessageType::ShmRequest &&
+        header.type != MessageType::ShmResponse) throw ProtocolError("unknown message type");
     if (header.payload_size > kMaxPayloadBytes) throw ProtocolError("payload exceeds 8 MiB limit");
+    if (header.type == MessageType::ShmRequest && header.payload_size != kSharedDescriptorBytes)
+        throw ProtocolError("SHM request must contain one descriptor");
+    if (header.type == MessageType::ShmResponse && header.payload_size != 0)
+        throw ProtocolError("SHM completion must have no payload");
 }
 
 } // namespace
@@ -76,6 +81,63 @@ std::vector<float> decode_tensor(const std::vector<std::uint8_t>& bytes) {
         std::memcpy(&value, &bits, sizeof(bits));
     }
     return values;
+}
+
+void validate_shared_name(const std::string& name) {
+    if (name.size() != kSharedNameBytes || name.compare(0, 6, "/erpc_") != 0 ||
+        name.find_first_not_of("0123456789abcdef", 6) != std::string::npos)
+        throw ProtocolError("invalid EdgeRPC shared-memory name");
+}
+
+void validate_shared_descriptor(const SharedDescriptor& descriptor) {
+    validate_shared_name(descriptor.name);
+    if (descriptor.region_bytes < 8 || descriptor.region_bytes > kMaxSharedBytes)
+        throw ProtocolError("shared region must be 8 bytes through 16 MiB");
+    if (descriptor.elements > kMaxElements || descriptor.tensor_bytes != descriptor.elements * 4ULL)
+        throw ProtocolError("shared tensor count/length mismatch");
+    const auto valid_range = [&](std::uint64_t offset) {
+        return offset % 4 == 0 && offset <= descriptor.region_bytes &&
+               descriptor.tensor_bytes <= descriptor.region_bytes - offset;
+    };
+    if (!valid_range(descriptor.input_offset) || !valid_range(descriptor.output_offset))
+        throw ProtocolError("shared tensor range is unaligned or outside region");
+    if (descriptor.tensor_bytes != 0 &&
+        descriptor.input_offset < descriptor.output_offset + descriptor.tensor_bytes &&
+        descriptor.output_offset < descriptor.input_offset + descriptor.tensor_bytes)
+        throw ProtocolError("shared input and output ranges overlap");
+}
+
+std::vector<std::uint8_t> encode_shared_descriptor(const SharedDescriptor& descriptor) {
+    validate_shared_descriptor(descriptor);
+    std::vector<std::uint8_t> bytes(kSharedDescriptorBytes);
+    auto* out = bytes.data();
+    put(out, 1, 2); // Descriptor version, independent of the frame version.
+    put(out, kSharedNameBytes, 2);
+    put(out, descriptor.region_bytes, 8);
+    put(out, descriptor.input_offset, 8);
+    put(out, descriptor.output_offset, 8);
+    put(out, descriptor.tensor_bytes, 4);
+    put(out, descriptor.elements, 4);
+    put(out, 0, 4); // Reserved; reject nonzero values rather than guessing semantics.
+    std::memcpy(out, descriptor.name.data(), kSharedNameBytes);
+    return bytes;
+}
+
+SharedDescriptor decode_shared_descriptor(const std::vector<std::uint8_t>& bytes) {
+    if (bytes.size() != kSharedDescriptorBytes) throw ProtocolError("invalid SHM descriptor length");
+    const auto* in = bytes.data();
+    if (get(in, 2) != 1 || get(in, 2) != kSharedNameBytes)
+        throw ProtocolError("unsupported SHM descriptor version/name length");
+    SharedDescriptor descriptor;
+    descriptor.region_bytes = get(in, 8);
+    descriptor.input_offset = get(in, 8);
+    descriptor.output_offset = get(in, 8);
+    descriptor.tensor_bytes = static_cast<std::uint32_t>(get(in, 4));
+    descriptor.elements = static_cast<std::uint32_t>(get(in, 4));
+    if (get(in, 4) != 0) throw ProtocolError("nonzero SHM reserved field");
+    descriptor.name.assign(reinterpret_cast<const char*>(in), kSharedNameBytes);
+    validate_shared_descriptor(descriptor);
+    return descriptor;
 }
 
 } // namespace edgerpc
