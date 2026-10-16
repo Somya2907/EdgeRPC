@@ -47,8 +47,9 @@ def load_trial(directory, record, requests, warmup):
     for row in rows:
         if None in row or row["status"] != "0" or row["run_id"] != summary["run_id"]:
             raise ValueError("malformed, failed or mixed-run sample")
-        if any(str(config[key]) != row[key] for key in KEYS):
-            raise ValueError("sample/configuration mismatch")
+        mismatch={key:(str(config[key]),row[key]) for key in KEYS if str(config[key]) != row[key]}
+        if mismatch:
+            raise ValueError(f"sample/configuration mismatch in {record['name']}: {mismatch}")
         latency = number(row["latency_us"])
         latencies.append(latency)
         if config["instrumented"] or slots:

@@ -18,7 +18,7 @@ import time
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/"benchmarks"))
-from report import report
+from report import load_trial, report
 
 
 def save(path, value):
@@ -44,6 +44,17 @@ def configurations(options):
               value["tensor_bytes"]==min(options.sizes_kib)*1024 and value["inflight"]==min(options.inflight) and
               value["delay_us"]==min(options.delays_us) and value["workload"]==options.workloads[0]]
     return result+controls
+
+
+def benchmark_command(build, path, config, requests, warmup, destination):
+    command=[str(build/"edgerpc_benchmark"),"--socket",str(path),"--mode",config["mode"],
+             "--size-kib",str(config["tensor_bytes"]//1024),"--inflight",str(config["inflight"]),
+             "--workers",str(config["workers"]),"--requests",str(requests),"--warmup",str(warmup),
+             "--workload",config["workload"],"--delay-us",str(config["delay_us"]),
+             "--instrumentation","on" if config["instrumented"] else "off","--csv",str(destination)]
+    if config["buffer_slots"]:
+        command += ["--buffer-slots",str(config["buffer_slots"])]
+    return command
 
 
 class Servers:
@@ -138,13 +149,7 @@ def run(options):
                         command=[]
                         try:
                             path=servers.get(config["delay_us"])
-                            command=[str(build/"edgerpc_benchmark"),"--socket",str(path),"--mode",config["mode"],
-                                     "--size-kib",str(config["tensor_bytes"]//1024),"--inflight",str(config["inflight"]),
-                                     "--workers","1","--requests",str(options.requests),"--warmup",str(options.warmup),
-                                     "--delay-us",str(config["delay_us"]),"--instrumentation","on" if config["instrumented"] else "off",
-                                     "--csv",str(output/record["samples"])]
-                            if config["buffer_slots"]:
-                                command += ["--buffer-slots",str(config["buffer_slots"])]
+                            command=benchmark_command(build,path,config,options.requests,options.warmup,output/record["samples"])
                             record["command"]=command
                             with (output/record["stdout"]).open("w") as stdout, (output/record["stderr"]).open("w") as stderr:
                                 process=subprocess.run(command,stdout=stdout,stderr=stderr,timeout=options.run_timeout)
@@ -153,6 +158,7 @@ def run(options):
                                 raise RuntimeError(f"benchmark exited {process.returncode}")
                             record["summary"]=dict(part.split("=",1) for part in (output/record["stdout"]).read_text().split())
                             record["status"]="completed"
+                            load_trial(output,record,options.requests,options.warmup)
                         except Exception as error:
                             record.update(status="failed",error=str(error),command=command)
                             failed=True
@@ -194,7 +200,7 @@ if __name__=="__main__":
     options=parser.parse_args()
     if options.smoke:
         options.trials,options.requests,options.warmup=1,8,2
-        options.sizes_kib,options.delays_us,options.slots,options.workloads=[4],[0],[2],["compute"]
+        options.sizes_kib,options.delays_us,options.slots,options.workloads=[4],[0],[2],["noop","compute"]
     if not (1<=options.trials<=100 and 1<=options.requests<=1000000 and 0<=options.warmup<=1000000 and
             options.run_timeout>0 and options.run_timeout<float("inf")):
         parser.error("invalid trial count, request count, warm-up or timeout")

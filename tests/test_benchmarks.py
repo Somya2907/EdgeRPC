@@ -5,11 +5,14 @@ from pathlib import Path
 import statistics
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 
 ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/"benchmarks"))
 from report import aggregate, report
+sys.path.insert(0,str(ROOT/"scripts"))
+from run_comparisons import benchmark_command, configurations
 
 
 class BenchmarkAnalysis(unittest.TestCase):
@@ -124,6 +127,27 @@ class BenchmarkAnalysis(unittest.TestCase):
     def test_missing_samples_rejected(self):
         (self.path/self.manifest["runs"][0]["samples"]).unlink()
         with self.assertRaises(FileNotFoundError): aggregate(self.path)
+
+    def test_runner_passes_all_configuration_arguments(self):
+        options=SimpleNamespace(sizes_kib=[4,64,1024],workloads=["noop","compute"],delays_us=[0,1000],
+                                inflight=[1,4],slots=[1,2,4])
+        configs=configurations(options)
+        self.assertEqual(len(configs),133)
+        for config in configs:
+            command=benchmark_command(Path('/build'),Path('/socket'),config,200,20,Path('/sample.csv'))
+            args=dict(zip(command[1::2],command[2::2]))
+            self.assertEqual(args['--workload'],config['workload'])
+            for key in ('inflight','workers','delay_us'):
+                self.assertEqual(args['--'+key.replace('_','-')],str(config[key]))
+            self.assertEqual(args['--size-kib'],str(config['tensor_bytes']//1024))
+            self.assertEqual(args['--instrumentation'],'on' if config['instrumented'] else 'off')
+            self.assertEqual(args.get('--buffer-slots','0'),str(config['buffer_slots']))
+
+    def test_requested_noop_cannot_be_reported_as_compute(self):
+        self.metadata['configurations'][0]['workload']='noop'
+        self.save()
+        with self.assertRaisesRegex(ValueError,'workload'):
+            aggregate(self.path)
 
 
 if __name__=="__main__":
