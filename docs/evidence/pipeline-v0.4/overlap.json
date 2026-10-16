@@ -1,0 +1,43 @@
+{
+  "slots-1": {
+    "samples": 1000,
+    "slots_used": [
+      1
+    ],
+    "stale_or_early_reuses": 0,
+    "preparations_overlapping_other_slot_execution": 0,
+    "overlap_example": null
+  },
+  "slots-2": {
+    "samples": 1000,
+    "slots_used": [
+      1,
+      2
+    ],
+    "stale_or_early_reuses": 0,
+    "preparations_overlapping_other_slot_execution": 996,
+    "overlap_example": {
+      "preparing_slot": 2,
+      "executing_slot": 1,
+      "overlap_begin_ns": 2419534718697,
+      "overlap_end_ns": 2419535763712
+    }
+  },
+  "slots-4": {
+    "samples": 1000,
+    "slots_used": [
+      1,
+      2,
+      3,
+      4
+    ],
+    "stale_or_early_reuses": 0,
+    "preparations_overlapping_other_slot_execution": 999,
+    "overlap_example": {
+      "preparing_slot": 2,
+      "executing_slot": 1,
+      "overlap_begin_ns": 2420860982914,
+      "overlap_end_ns": 2420862021449
+    }
+  }
+}

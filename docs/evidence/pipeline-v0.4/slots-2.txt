@@ -1,0 +1,1 @@
+completed=1000 failures=0 warmup=100 mode=shm-double-buffer tensor_bytes=4096 inflight=4 workers=1 buffer_slots=2 prepare_us=1000 initialization_us=452.557 p50_us=4705.370 p95_us=5373.641 p99_us=5943.235 throughput_rps=828.767

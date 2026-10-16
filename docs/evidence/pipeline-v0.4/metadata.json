@@ -1,0 +1,29 @@
+{
+  "timestamp_utc": "2026-10-16T20:12:22.128713+00:00",
+  "system": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "machine": "x86_64",
+  "compiler": "c++ (Debian 14.2.0-19) 14.2.0",
+  "build_dir": "/workspace/EdgeRPC/build",
+  "requests": 1000,
+  "warmup": 100,
+  "prepare_us": 1000,
+  "delay_us": 1000,
+  "mode": "shm-double-buffer",
+  "slots": [
+    1,
+    2,
+    4
+  ],
+  "inflight": 4,
+  "workers": 1,
+  "tensor_bytes": 4096,
+  "workload": "compute",
+  "note": "One trial per slot count; synthetic CPU preparation/execution, not hardware or a repeated performance study.",
+  "cmake_settings": [
+    "CMAKE_BUILD_TYPE:STRING=Release",
+    "CMAKE_CXX_COMPILER:FILEPATH=/usr/bin/c++",
+    "CMAKE_CXX_FLAGS:STRING=",
+    "CMAKE_CXX_FLAGS_RELEASE:STRING=-O3 -DNDEBUG",
+    "EDGERPC_SANITIZERS:BOOL=OFF"
+  ]
+}

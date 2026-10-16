@@ -1,6 +1,6 @@
 # Shared-memory transport (v0.3)
 
-The client and server map one POSIX shared-memory object per request. Only a 70-byte descriptor crosses the request socket; success returns a 28-byte completion header with no tensor payload. Existing socket-copy modes remain available. This reduces application-level socket tensor transfers; the vector-based API and mock backend still copy data into and out of mappings.
+This document describes `SharedMemory` / `--transport shm`: the client and server map one POSIX shared-memory object per request. Only a 70-byte descriptor crosses the request socket; success returns a 28-byte completion header with no tensor payload. Existing socket-copy modes remain available. The v0.4 `SharedPool` / `--transport pool` mode adds [registration and reusable slots](pipeline.md) while retaining the validation/trust rules below. The vector-based API and mock backend still copy data into and out of mappings.
 
 ## Layout and ownership
 
@@ -12,7 +12,7 @@ For a tensor of `N` float32 elements, the normal client requests `max(8, 8*N)` b
 4. **Execute:** a bounded queue owns the server mapping. The worker reads input into the backend's vector, computes, and copies output to its disjoint region. It finishes those writes before sending completion with the matching request ID. Rejected queue submissions receive OVERLOADED and discard their mapping.
 5. **Complete:** the client matches the response ID/type, reads output into `Response::output`, timestamps completion, and resolves the promise. RAII releases mappings and any still-owned name as references are dropped. Futures contain vectors, so result data remains valid after unmapping.
 
-Socket control messages transfer exclusive access to the output range. The client never reads output before a valid completion. An ordinary `std::mutex` is not used as an inter-process lock. This phase has no buffer slots or in-place reuse. The next phase needs registered, retained server mappings and an explicit pool/state machine; it cannot simply reopen these already-unlinked names on subsequent requests.
+Socket control messages transfer exclusive access to the output range. The client never reads output before a valid completion. An ordinary `std::mutex` is not used as an inter-process lock. Per-request mode has no buffer slots or in-place reuse. Pool mode instead registers and retains mappings, because already-unlinked names cannot be reopened on subsequent requests.
 
 ## Representation and validation
 
@@ -46,6 +46,6 @@ mkdir -p results
   --size-kib 64 --inflight 16 --requests 1000 --warmup 100 --csv results/shm.csv
 ```
 
-The `shm-async` latency includes allocation, storage reservation, mapping, input/output vector copies, and server unlinking for **every request**, including after warm-up. Client RAII teardown may occur after promise completion and is not fully included in that latency; teardown can overlap the measured throughput loop. It is not a buffer-reuse result and may be slower than socket copying. Pooling, double buffering, per-stage instrumentation, measured byte counters, and repeated comparative reports remain later phases. A successful SHM call transfers 126 application-level socket bytes (`28 + 70 + 28`), regardless of tensor length; this is a schema-derived byte count, not a measured count of physical memory traffic.
+The `shm-async` latency includes allocation, storage reservation, mapping, input/output vector copies, and server unlinking for **every request**, including after warm-up. Client RAII teardown may occur after promise completion and is not fully included in that latency; teardown can overlap the measured throughput loop. It is not a buffer-reuse result and may be slower than socket copying. Pool mode separates initialization and records stage times; measured byte counters and repeated comparative reports remain phase 4. A successful per-request SHM call transfers 126 application-level socket bytes (`28 + 70 + 28`), regardless of tensor length; this is a schema-derived byte count, not a measured count of physical memory traffic.
 
 Linux Release and ASan/UBSan validation cover independent C++/Python mappings, zero/max tensors, compute/noop, mixed socket/SHM requests, reversed replies, invalid bounds/names/permissions/sizes, overload unlinking, pending-call cleanup, server crash/restart, and a 1,000-request SHM benchmark with 16 in flight. Native macOS/ARM64 execution remains pending.

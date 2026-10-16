@@ -6,7 +6,7 @@ Local `AF_UNIX` / `SOCK_STREAM` connections carry consecutive frames. Each frame
 |---|---:|---|---|
 | 0 | 4 | magic | `0x45525043` (`ERPC`) |
 | 4 | 2 | version | `1` |
-| 6 | 2 | type | `1` socket request, `2` socket response, `3` error, `4` SHM request, `5` SHM completion |
+| 6 | 2 | type | `1` socket request, `2` socket response, `3` error, `4` SHM request, `5` SHM completion, `6` register, `7` registration ACK, `8` pool request, `9` pool completion |
 | 8 | 8 | request_id | Nonzero unsigned 64-bit ID, echoed in response |
 | 16 | 4 | payload_size | 0 through 8,388,608 bytes |
 | 20 | 4 | status | `0` OK, `1` invalid request, `2` backend failure, `3` overloaded |
@@ -39,3 +39,20 @@ Frame version 1 is retained. Types 4 and 5 are additive: an older peer may rejec
 | 40 | 30 | name | ASCII `/erpc_` followed by 24 lowercase hex digits; no NUL terminator |
 
 All descriptor integers are big-endian. Input/output are native-endian float32 in a shared object on the same host with matching byte order. No virtual pointers cross the socket. Zero-length ranges may coincide or end at the region boundary. Validation rejects all other overlaps and uses subtraction-based bounds checks before accessing offsets. After mapping and validating, the server unlinks the object's name at admission and retains its mapping through execution. See [ownership, cleanup, and trust boundaries](shared-memory.md).
+
+## Registered buffer control (v0.4)
+
+Types 6–9 are additive under frame version 1, with no negotiation or downgrade. Exact payload lengths are checked before allocation. Registration uses OK status, flags 0, and a nonzero request ID. Its 74-byte payload is a four-byte slot ID followed by the existing 70-byte shared descriptor. IDs 1–4 are permitted, with no replacement or unregister during that connection. The descriptor's count/length specify capacity, while offsets remain fixed. The server maps/validates/unlinks once and retains the mapping. A successful ACK echoes the ID and flags, with OK status and a four-byte slot ID payload. Registration failures use normal error frames. The client completes registration before launching inference I/O threads; control exchanges consume request IDs.
+
+A type-8 request uses the usual operation flags, OK status, and a nonzero ID, with this exact 24-byte payload:
+
+| Payload offset | Bytes | Field | Constraint |
+|---|---:|---|---|
+| 0 | 4 | slot | Registered ID, 1–4 |
+| 4 | 4 | elements | At most registered capacity and 2,097,152 |
+| 8 | 8 | generation | Nonzero; greater than last accepted use of this slot |
+| 16 | 8 | reserved | 0 |
+
+The reader marks an accepted slot busy before enqueueing. Busy slots, unknown IDs, stale generations, and invalid counts receive INVALID_REQUEST. Rejection must not release a different running generation. A full execution queue releases the acquired slot before OVERLOADED is sent; that generation remains consumed. The next use must increment it even after an error. Accepted slot ownership lasts through the final output write, before completion is sent. The client must consume output before sending another use of that slot. Same-user clients must obey this ownership contract; metadata checks cannot prevent a malicious mapping mutation.
+
+A successful type-9 response echoes the request ID/operation with OK status. Its exact 48-byte payload starts with the same 24-byte slot reference, then three unsigned big-endian 64-bit timestamps at offsets 24, 32, and 40: queue admission, execution begin, execution end. All use the host's `CLOCK_MONOTONIC` nanoseconds, with `0 < queued <= begin <= end`. Execution includes input/output copies and backend work. The receiver validates slot, generation, and count before reading output. Errors retain type 3 and release the lease only for the corresponding pending ID. Malformed/stale completions fail all pending work and stop reuse on that connection. See [the pool state machine](pipeline.md).

@@ -4,12 +4,13 @@ A C++17 client/server runtime for studying inference RPC across processes. A cli
 
 This is a software prototype inspired by heterogeneous inference communication. It does **not** implement Qualcomm FastRPC, execute on an NPU, or measure CPU–NPU transfers.
 
-## Current milestone: shared-memory transport
+## Current milestone: reusable buffers and double buffering
 
 - Reusable `edgerpc` library, server, demo client, and benchmark.
 - Thread-safe `infer_async()` submissions, futures, request-ID matching, and shared sync/async transport.
 - Bounded outstanding client requests and server task queues with explicit overload errors.
 - Per-request POSIX shared-memory tensors, validated descriptors, and metadata-only socket traffic.
+- Registered 1/2/4-slot pools, generation validation, explicit buffer ownership, and preparation/execution overlap traces.
 - Versioned binary frames, explicit big-endian integers and float32 values, unique client request IDs, and an 8 MiB tensor limit.
 - Partial read/write and interruption handling, bounded I/O deadlines, disconnect errors, and response validation.
 - Persistent connections, deterministic compute/noop workloads, and optional simulated execution delay.
@@ -17,7 +18,7 @@ This is a software prototype inspired by heterogeneous inference communication. 
 - Correctness and failure tests that run separate server/client processes.
 - Warm-up-separated measurements, per-request CSV, p50/p95/p99, and throughput.
 
-Synchronous RPC, async execution, and shared-memory transport are implemented. Buffer reuse/double buffering, comparative performance reports, and target-platform validation remain in [the completion roadmap](docs/completion-plan.md). The server serves one active client connection at a time and supports multiple outstanding requests within it. Client submissions may come from multiple threads.
+Synchronous RPC, async execution, shared-memory transport, and buffer reuse/double buffering are implemented. Comparative performance reports and target-platform validation remain in [the completion roadmap](docs/completion-plan.md). The server serves one active client connection at a time and supports multiple outstanding requests within it. Client submissions may come from multiple threads.
 
 ## Build and test
 
@@ -61,6 +62,7 @@ Terminal 2:
 ./build/edgerpc_demo --socket /tmp/edgerpc.sock --workload noop --elements 1024 --verify
 ./build/edgerpc_demo --socket /tmp/edgerpc.sock --mode async --requests 32 --elements 1024 --verify
 ./build/edgerpc_demo --socket /tmp/edgerpc.sock --mode async --transport shm --requests 32 --elements 1024 --verify
+./build/edgerpc_demo --socket /tmp/edgerpc.sock --mode async --transport pool --buffer-slots 2 --requests 32 --elements 1024 --verify
 ```
 
 Expect `status=OK verified=true` for every requested result. Stop the server with Ctrl-C. All binaries support `--help`. Tensor counts from zero through 2,097,152 float32 elements are supported. The server defaults to one worker and 32 queued tasks; configure `--queue-capacity` as needed. `--workers 2` through `16` is an optional parallel CPU experiment; it does not model a single serialized accelerator.
@@ -84,7 +86,7 @@ auto shared = client.infer_async({1.0f, 2.0f}, edgerpc::Operation::Compute,
 auto shared_result = shared.get();
 ```
 
-The third argument of both inference methods selects `Socket` (default) or `SharedMemory`; they can be mixed on one connection. SHM mode allocates a fresh object for each call and copies vectors into/out of native-endian mapped tensors. The server validates the descriptor/object and unlinks the name on admission. Both mappings remain valid until completion or cleanup. This phase reduces socket tensor transfers; it does not provide a reusable or zero-copy backend. See [layout, ownership, limits, and crash recovery](docs/shared-memory.md).
+The third argument selects `Socket` (default), `SharedMemory`, or `SharedPool`; they can be mixed on one connection. Per-request SHM allocates a fresh object for each call. To reuse buffers, pass `PoolOptions{2, 1024}` as the constructor's fourth argument, then select `SharedPool` for calls with at most 1,024 elements. Registration happens once during construction; generations and states prevent early slot reuse. Both modes copy vectors into/out of native-endian mapped tensors; the backend still copies data. See [pool registration and ownership](docs/pipeline.md) and [shared-memory limits/crash recovery](docs/shared-memory.md).
 
 Client capacity defaults to 32 **total outstanding calls**, including queued and sent requests; the constructor's third argument changes it (1–1024). A full client returns an already-failed future with `RpcError(Status::Overloaded)`. A full server queue returns the same status for that request. Valid remote errors leave other requests and the connection usable. Protocol errors, I/O failures, `close()`, and destruction settle outstanding futures with exceptions. `close()` is idempotent and joins owned threads. Do not destroy the client while another thread is calling its methods.
 
@@ -103,6 +105,9 @@ mkdir -p results
 ./build/edgerpc_benchmark --socket /tmp/edgerpc.sock --mode shm-async \
   --size-kib 64 --inflight 16 --requests 1000 --warmup 100 \
   --workload compute --csv results/shm.csv
+./build/edgerpc_benchmark --socket /tmp/edgerpc.sock --mode shm-double-buffer \
+  --buffer-slots 2 --size-kib 64 --inflight 4 --requests 1000 --warmup 100 \
+  --workload compute --csv results/pool.csv
 ```
 
 Or let the script start and clean up its own server, use a private temporary socket, and save system/build metadata:
@@ -110,9 +115,10 @@ Or let the script start and clean up its own server, use a private temporary soc
 ```sh
 ./scripts/run_benchmarks.sh
 REQUESTS=5000 WARMUP=200 SIZES_KIB="4 64 1024 8192" ./scripts/run_benchmarks.sh
+./scripts/run_pipeline_benchmarks.sh  # 1/2/4 slots with synthetic preparation/execution
 ```
 
-The script currently runs the synchronous baseline; the binary supports both socket modes and `shm-async`. Results go in ignored `results/`. Run repeated trials before interpreting performance. Compare transports at equal concurrency, tensor size, workload, delay, and worker count. A single sync caller versus 16 async calls is a concurrency experiment. SHM timings include fresh allocation/map setup for every call; pooled steady-state measurements come later. [Benchmark methodology](docs/benchmarks.md) explains timer boundaries and limitations. No speedup is assumed.
+The baseline script runs socket sync; the pipeline script compares slot counts at fixed concurrency and records overlap intervals. The binary supports all four modes. Results go in ignored `results/`; [the recorded phase-3 evidence](docs/pipeline-evidence.md) retains one demonstration in the repository. Run repeated trials before drawing performance conclusions. Compare transports at equal concurrency, tensor size, workload, delay, and worker count. Per-request SHM timings include fresh allocation/map setup; pool initialization is reported separately. [Benchmark methodology](docs/benchmarks.md) explains timer boundaries and limitations.
 
 ## Reliability and architecture
 
@@ -125,7 +131,7 @@ future <- ID matching <- receiver <- Unix socket <- worker(s): 2*x+1 / noop
 
 See [the wire protocol](docs/protocol.md), [shared-memory ownership](docs/shared-memory.md), and [architecture and next steps](docs/architecture.md).
 
-Linux CTest includes nine protocol/backend/metrics groups, 18 async/concurrency groups, six buffer/descriptor groups, and 30 Python integration tests. Coverage includes zero/max tensors, independent mappings, invalid metadata/permissions, reversed mixed-mode replies, allocation failure, overload cleanup, disconnects, server crash/restart, and 1,000-request socket/SHM stress benchmarks. The allocation-failure injection uses a Linux-specific resource limit; other groups are shared with macOS. Checks remain active in Release builds.
+Linux CTest includes nine protocol/backend/metrics groups, 27 async/concurrency groups, six buffer/descriptor groups, four pool/wire/state groups, and 37 Python integration tests. Coverage includes zero/max tensors, independent mappings, invalid metadata/permissions, reversed mixed-mode replies, allocation and registration failures, pool generations/ownership, overload cleanup, disconnects, server crash/restart, and 1,000-request socket/SHM/pool stress benchmarks. The allocation-failure injection uses a Linux-specific resource limit; other groups are shared with macOS. Checks remain active in Release builds.
 
 For a sanitizer build:
 

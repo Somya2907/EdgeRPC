@@ -4,9 +4,9 @@
 
 ## Client lifecycle
 
-1. `EdgeRpcClient` opens one persistent Unix domain socket and starts a sender and receiver.
+1. `EdgeRpcClient` opens one persistent Unix domain socket, optionally allocates/registers a fixed pool, and starts a sender and receiver.
 2. `infer_async` validates the input and transport selection, reserves a bounded pending slot, assigns an ID under a mutex, and enqueues the moved tensor. It returns a future without waiting for server execution. `infer_sync` uses the same API and waits on that future.
-3. The sender prepares either an encoded socket tensor or a per-request shared region plus descriptor, then writes whole request frames in submission order. Shared regions are published to pending state under the mutex before transmission. The receiver waits for prepared calls, validates replies, matches the pending promise by ID, reconstructs output, timestamps completion, and settles the promise. Socket and SHM calls can coexist and complete in any order.
+3. The sender prepares an encoded socket tensor, a per-request shared region plus descriptor, or a lease from the registered pool, then writes whole request frames in submission order. Shared regions/leases are published to pending state under the mutex before transmission. The receiver waits for prepared calls, validates replies, matches the pending promise by ID, reconstructs output, timestamps completion, and settles the promise. All three transports can coexist and complete in any order. Pool leases are released only after output copying; stopped pools wake waiting senders without recycling abandoned executing slots.
 4. A valid error response settles only its request. Protocol/transport failures atomically stop submission, interrupt I/O with `shutdown`, clear queued work, and fail all unresolved promises.
 5. `close()` is idempotent and serialized across callers. It joins both I/O threads before closing the descriptor. Destruction closes automatically; futures may outlive the client and still receive a settled error. The caller must keep the object alive while methods execute.
 
@@ -20,6 +20,8 @@ The server accepts one active connection at a time. For that connection, its rea
 
 Workers call `ExecutionBackend`, then encode socket results or write to the mapped output range and send an empty SHM completion. All response frames use a connection writer mutex. The reader uses that same writer for validation and overload errors, preventing interleaved bytes. `MockExecutor` echoes values or computes `2*x+1`, with optional delay. It is thread-safe because each invocation owns its vectors and the configured delay is immutable. The vector backend still copies data; shared memory reduces socket tensor payloads without claiming zero-copy compute.
 
+Registered pools retain up to four mappings per connection. Pool requests carry slot/count/generation, and completions carry matching references plus stage timestamps. A registry mutex protects busy flags and generations. Workers clear busy after their last mapped access, before sending completion. Overload also clears the acquired slot before sending its error. The client acknowledges consumption by submitting that slot's next generation; see [registration and ownership](pipeline.md).
+
 Configure 1–16 workers for separate CPU-scaling experiments. A custom backend must support concurrent execution when more than one worker is enabled. Multiple CPU workers do not represent one serialized accelerator.
 
 On EOF, malformed input, termination, or write failure, the connection is shut down, waiting tasks are discarded, and running tasks finish before the accepted descriptor or backend can be destroyed. There is no forced cancellation of running compute and no promise of graceful half-close/drain semantics. Fair multi-client scheduling is not implemented.
@@ -32,8 +34,8 @@ The OS listen backlog (16) is separate from the execution queue. Tensors are cap
 
 Per-header/payload I/O deadlines are separate from request execution deadlines. A client without prepared requests awaiting replies waits on a condition variable rather than timing out. With transmitted calls, a silent server eventually fails them all; continued unrelated replies may delay failure of a missing reply. The server polls while waiting for new work and suspends its idle deadline while tasks are outstanding. Partial frames still have read deadlines.
 
-The benchmark measures submission through client decoding/validation or shared-output copying using `Response::completed_at`, before promise notification. It does not confuse the order in which futures are inspected with the order replies arrived. SHM allocates/maps per request, and teardown can finish after promise completion. Stage-level queue/execution timing and pooled reuse measurements are planned, not yet measured.
+The benchmark measures submission through client decoding/validation or shared-output copying using `Response::completed_at`, before promise notification. It does not confuse the order in which futures are inspected with the order replies arrived. Per-request SHM allocates/maps each time, and teardown can finish after promise completion. Pool mode separates connection/registration initialization and records preparation, queue, execution, and buffer acquisition timestamps. [Recorded intervals](pipeline-evidence.md) demonstrate overlap on Linux with synthetic preparation/execution delays. Other transports do not yet have per-stage timing or measured socket-byte counters.
 
 ## Remaining milestones
 
-See [the completion roadmap](completion-plan.md) for acceptance criteria and status. Next are registered reusable mappings with explicit ownership and two-slot pipelining, instrumented comparisons with charts/repeated trials, and native Mac/ARM64 validation. Registration must retain server mappings because per-request SHM names are already unlinked after admission. Qualcomm QNN/FastRPC integration requires supported hardware and SDK access; CPU simulator measurements cannot establish NPU behavior.
+See [the completion roadmap](completion-plan.md) for acceptance criteria and status. Next are instrumented comparisons with charts/repeated trials and native Mac/ARM64 validation. Qualcomm QNN/FastRPC integration requires supported hardware and SDK access; CPU simulator measurements cannot establish NPU behavior.

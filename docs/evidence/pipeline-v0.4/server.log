@@ -1,0 +1,1 @@
+READY socket=/tmp/erpc-pipe.ELcSTJ/rpc.sock workers=1 queue_capacity=32 simulator=true
