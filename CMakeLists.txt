@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(EdgeRPC VERSION 0.1.0 LANGUAGES CXX)
+project(EdgeRPC VERSION 0.2.0 LANGUAGES CXX)
 
 if(NOT UNIX)
     message(FATAL_ERROR "EdgeRPC requires POSIX Unix domain sockets (macOS or Linux).")
@@ -16,6 +16,7 @@ add_library(edgerpc
     src/transport_unix.cpp
     src/client.cpp
     src/server.cpp
+    src/thread_pool.cpp
     src/mock_executor.cpp
     src/metrics.cpp)
 target_include_directories(edgerpc PUBLIC include)
@@ -41,10 +42,15 @@ if(BUILD_TESTING)
     target_link_libraries(test_protocol PRIVATE edgerpc)
     target_compile_options(test_protocol PRIVATE -Wall -Wextra -Wpedantic)
     add_test(NAME protocol COMMAND test_protocol)
+    add_executable(test_async tests/test_async.cpp)
+    target_link_libraries(test_async PRIVATE edgerpc)
+    target_compile_options(test_async PRIVATE -Wall -Wextra -Wpedantic)
+    add_test(NAME async COMMAND test_async)
     find_package(Python3 3.8 REQUIRED COMPONENTS Interpreter)
     add_test(NAME integration COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/tests/test_integration.py
         --bin-dir $<TARGET_FILE_DIR:edgerpc_server>)
     set_tests_properties(protocol PROPERTIES TIMEOUT 20)
+    set_tests_properties(async PROPERTIES TIMEOUT 40)
     set_tests_properties(integration PROPERTIES TIMEOUT 90)
 endif()

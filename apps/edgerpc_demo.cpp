@@ -6,21 +6,32 @@
 int main(int argc, char** argv) {
     try {
         edgerpc::cli::Arguments args(argc, argv,
-            {"--socket", "--mode", "--elements", "--workload", "--timeout-ms"}, {"--verify", "--help"});
+            {"--socket", "--mode", "--elements", "--requests", "--max-pending", "--workload", "--timeout-ms"},
+            {"--verify", "--help"});
         if (args.has("--help")) {
-            std::cout << "Usage: edgerpc_demo [--socket PATH] [--mode sync] [--elements 1024] "
+            std::cout << "Usage: edgerpc_demo [--socket PATH] [--mode sync|async] [--elements 1024] "
+                         "[--requests 1] [--max-pending 32] "
                          "[--workload compute|noop] [--verify] [--timeout-ms 5000]\n";
             return 0;
         }
-        if (args.get("--mode", "sync") != "sync") throw std::invalid_argument("only sync mode is implemented");
+        const auto mode = args.get("--mode", "sync");
+        if (mode != "sync" && mode != "async") throw std::invalid_argument("--mode must be sync or async");
+        const auto requests = args.number("--requests", 1, 1, 1024);
+        const auto capacity = args.number("--max-pending", 32, 1, 1024);
         const auto input = edgerpc::cli::make_input(args.number("--elements", 1024, 0, edgerpc::kMaxElements));
         const auto operation = edgerpc::cli::operation(args);
         const auto timeout = edgerpc::Timeout{args.number("--timeout-ms", 5000, 1, 600000)};
-        edgerpc::EdgeRpcClient client(args.get("--socket", "/tmp/edgerpc.sock"), timeout);
-        const auto response = client.infer_sync(input, operation);
-        if (args.has("--verify")) edgerpc::cli::verify(input, response.output, operation);
-        std::cout << "request_id=" << response.id << " elements=" << response.output.size()
-                  << " status=OK verified=" << (args.has("--verify") ? "true" : "false") << '\n';
+        edgerpc::EdgeRpcClient client(args.get("--socket", "/tmp/edgerpc.sock"), timeout, capacity);
+        std::vector<std::future<edgerpc::Response>> pending;
+        if (mode == "async") {
+            for (std::uint64_t i = 0; i < requests; ++i) pending.push_back(client.infer_async(input, operation));
+        }
+        for (std::uint64_t i = 0; i < requests; ++i) {
+            const auto response = mode == "async" ? pending[i].get() : client.infer_sync(input, operation);
+            if (args.has("--verify")) edgerpc::cli::verify(input, response.output, operation);
+            std::cout << "request_id=" << response.id << " elements=" << response.output.size()
+                      << " status=OK verified=" << (args.has("--verify") ? "true" : "false") << '\n';
+        }
         return 0;
     } catch (const std::exception& error) {
         std::cerr << "edgerpc_demo: " << error.what() << '\n';

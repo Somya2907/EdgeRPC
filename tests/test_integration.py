@@ -44,21 +44,29 @@ class Server:
     def __init__(self, path, *options):
         self.path = str(path)
         self.log = tempfile.TemporaryFile(mode="w+t")
+        server_options = list(options)
+        if "--timeout-ms" not in server_options:
+            server_options += ["--timeout-ms", "1000"]
         self.process = subprocess.Popen(
-            [str(BIN / "edgerpc_server"), "--socket", self.path, "--timeout-ms", "1000", *options],
+            [str(BIN / "edgerpc_server"), "--socket", self.path, *server_options],
             stdout=self.log, stderr=self.log,
         )
         deadline = time.monotonic() + 5
+        readiness_error = "no functional response yet"
         try:
             while time.monotonic() < deadline:
                 if self.process.poll() is not None:
                     raise RuntimeError("server exited during startup: " + self.output())
                 if Path(self.path).exists():
                     # A successful functional request is the readiness check.
-                    self.demo("--elements", "1", "--verify")
-                    return
+                    # A stale path can exist before the restarted process has rebound it.
+                    try:
+                        self.demo("--elements", "1", "--timeout-ms", "1000", "--verify")
+                        return
+                    except subprocess.CalledProcessError as error:
+                        readiness_error = error.stderr
                 time.sleep(0.01)
-            raise RuntimeError("server startup timed out")
+            raise RuntimeError("server startup timed out: " + readiness_error)
         except BaseException:
             self.stop()
             self.log.close()
@@ -140,6 +148,67 @@ class Integration(unittest.TestCase):
             header, payload = receive(peer)
             self.assertEqual(header[3], 77)
             self.assertEqual(struct.unpack("!f", payload), (8.0,))
+
+    def restart_server(self, *options):
+        self.server.stop()
+        self.server = Server(self.path, *options)
+        self.addCleanup(self.server.close)
+
+    def test_async_demo_and_worker_configuration(self):
+        self.restart_server("--workers", "2")
+        result = self.server.demo("--mode", "async", "--requests", "32", "--verify")
+        lines = result.stdout.splitlines()
+        self.assertEqual(len(lines), 32)
+        self.assertTrue(all("status=OK verified=true" in line for line in lines))
+        self.assertEqual(len({line.split()[0] for line in lines}), 32)
+
+    def test_server_overload_and_recovery(self):
+        self.restart_server("--queue-capacity", "1", "--delay-us", "100000")
+        with self.peer() as peer:
+            peer.sendall(b"".join(frame(struct.pack("!f", float(i)), request_id=i) for i in range(1, 33)))
+            replies = [receive(peer) for _ in range(32)]
+            self.assertEqual({header[3] for header, _ in replies}, set(range(1, 33)))
+            statuses = [header[5] for header, _ in replies]
+            self.assertIn(3, statuses)
+            self.assertIn(0, statuses)
+            for header, payload in replies:
+                if header[5] == 3:
+                    self.assertEqual(header[2], 3)
+                    self.assertIn(b"queue is full", payload)
+                else:
+                    self.assertEqual(header[2], 2)
+                    self.assertEqual(struct.unpack("!f", payload), (2 * header[3] + 1,))
+            peer.sendall(frame(struct.pack("!f", 3), request_id=100))
+            header, payload = receive(peer)
+            self.assertEqual((header[3], header[5]), (100, 0))
+            self.assertEqual(struct.unpack("!f", payload), (7.0,))
+
+    def test_disconnect_cancels_waiting_server_work(self):
+        self.restart_server("--delay-us", "100000", "--queue-capacity", "32")
+        with self.peer() as peer:
+            peer.sendall(b"".join(frame(struct.pack("!f", 1), request_id=i) for i in range(1, 33)))
+        # Cancelling the 32 queued tasks should permit a new client without draining all 3.2s of work.
+        self.server.demo("--timeout-ms", "1000", "--verify")
+
+    def test_execution_is_not_cancelled_by_idle_read_timeout(self):
+        self.restart_server("--timeout-ms", "50", "--delay-us", "100000")
+        result = self.server.demo("--requests", "2", "--timeout-ms", "1000", "--verify")
+        self.assertEqual(result.stdout.count("status=OK verified=true"), 2)
+
+    def test_async_benchmark_stress(self):
+        destination = Path(self.directory.name) / "async.csv"
+        result = subprocess.run(
+            [str(BIN / "edgerpc_benchmark"), "--socket", str(self.path), "--mode", "socket-async",
+             "--inflight", "16", "--requests", "1000", "--warmup", "32", "--size-kib", "4",
+             "--csv", str(destination)], text=True, capture_output=True, check=True, timeout=15,
+        )
+        with destination.open(newline="") as stream:
+            rows = list(csv.DictReader(stream))
+        self.assertEqual(len(rows), 1000)
+        self.assertEqual({int(row["request_id"]) for row in rows}, set(range(33, 1033)))
+        self.assertTrue(all(row["mode"] == "socket-async" and row["inflight"] == "16" for row in rows))
+        self.assertTrue(all(row["status"] == "0" and float(row["latency_us"]) > 0 for row in rows))
+        self.assertIn("completed=1000 failures=0", result.stdout)
 
     def test_malformed_headers_and_recovery(self):
         bad_headers = [frame(magic=0), frame(version=9), frame(kind=9), frame(size=MAX_BYTES + 1)]
@@ -235,12 +304,12 @@ class Integration(unittest.TestCase):
 
     def test_rejects_invalid_cli_options(self):
         for binary, options in [
-            ("edgerpc_demo", ["--mode", "async"]),
+            ("edgerpc_demo", ["--mode", "unknown"]),
             ("edgerpc_demo", ["--elements", str(MAX_BYTES // 4 + 1)]),
             ("edgerpc_demo", ["--elements", "-1"]),
             ("edgerpc_demo", ["--elements"]),
             ("edgerpc_demo", ["--unknown"]),
-            ("edgerpc_server", ["--workers", "2"]),
+            ("edgerpc_server", ["--workers", "17"]),
             ("edgerpc_benchmark", ["--requests", "0"]),
             ("edgerpc_benchmark", ["--inflight", "2"]),
         ]:

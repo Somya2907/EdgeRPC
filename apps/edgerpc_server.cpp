@@ -14,15 +14,16 @@ extern "C" void request_stop(int) { stop_requested = 1; }
 int main(int argc, char** argv) {
     try {
         edgerpc::cli::Arguments args(argc, argv,
-            {"--socket", "--workers", "--delay-us", "--timeout-ms"}, {"--help"});
+            {"--socket", "--workers", "--queue-capacity", "--delay-us", "--timeout-ms"}, {"--help"});
         if (args.has("--help")) {
-            std::cout << "Usage: edgerpc_server [--socket PATH] [--workers 1] "
+            std::cout << "Usage: edgerpc_server [--socket PATH] [--workers 1..16] [--queue-capacity 32] "
                          "[--delay-us 0..1000000] [--timeout-ms 5000]\n"
-                         "Single-worker, serial, simulated accelerator; not an NPU.\n";
+                         "Default: one execution worker. Extra workers model parallel CPU work, not an NPU.\n";
             return 0;
         }
-        args.number("--workers", 1, 1, 1);
         edgerpc::ServerOptions options;
+        options.workers = args.number("--workers", 1, 1, 16);
+        options.queue_capacity = args.number("--queue-capacity", 32, 1, 1024);
         options.socket_path = args.get("--socket", "/tmp/edgerpc.sock");
         options.timeout = edgerpc::Timeout{args.number("--timeout-ms", 5000, 1, 600000)};
         edgerpc::MockExecutor backend(std::chrono::microseconds{

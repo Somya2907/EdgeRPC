@@ -16,7 +16,7 @@ constexpr std::size_t kMaxElements = kMaxPayloadBytes / 4;
 
 enum class MessageType : std::uint16_t { Request = 1, Response = 2, Error = 3 };
 enum class Operation : std::uint32_t { Noop = 0, Compute = 1 };
-enum class Status : std::uint32_t { Ok = 0, InvalidRequest = 1, InternalError = 2 };
+enum class Status : std::uint32_t { Ok = 0, InvalidRequest = 1, InternalError = 2, Overloaded = 3 };
 
 class ProtocolError : public std::runtime_error {
 public:
