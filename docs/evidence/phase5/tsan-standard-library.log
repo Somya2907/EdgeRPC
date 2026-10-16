@@ -1,0 +1,40 @@
+==================
+WARNING: ThreadSanitizer: data race (pid=52065)
+  Write of size 8 at 0x722800000e50 by thread T23:
+    #0 free ../../../../src/libsanitizer/tsan/tsan_interceptors_posix.cpp:724 (libtsan.so.2+0x53f20) (BuildId: 99ef88596cb10a8ccf307fe1a9070f66a44b1624)
+    #1 std::__exception_ptr::exception_ptr::_M_release() <null> (libstdc++.so.6+0xb328c) (BuildId: 133b71e0013695cc7832680a74edb51008c4fc4c)
+    #2 std::__future_base::_Result<int>::~_Result() /usr/include/c++/14/future:265 (future_exception+0x98bd) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #3 std::__future_base::_Result<int>::_M_destroy() /usr/include/c++/14/future:286 (future_exception+0x9814) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #4 std::__future_base::_Result_base::_Deleter::operator()(std::__future_base::_Result_base*) const /usr/include/c++/14/future:236 (future_exception+0x4c5d) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #5 std::unique_ptr<std::__future_base::_Result_base, std::__future_base::_Result_base::_Deleter>::~unique_ptr() /usr/include/c++/14/bits/unique_ptr.h:399 (future_exception+0x576e) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #6 std::__future_base::_State_baseV2::~_State_baseV2() /usr/include/c++/14/future:351 (future_exception+0x95ab) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #7 void std::_Destroy<std::__future_base::_State_baseV2>(std::__future_base::_State_baseV2*) /usr/include/c++/14/bits/stl_construct.h:151 (future_exception+0x995a) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #8 void std::allocator_traits<std::allocator<void> >::destroy<std::__future_base::_State_baseV2>(std::allocator<void>&, std::__future_base::_State_baseV2*) /usr/include/c++/14/bits/alloc_traits.h:720 (future_exception+0x96c9) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #9 std::_Sp_counted_ptr_inplace<std::__future_base::_State_baseV2, std::allocator<void>, (__gnu_cxx::_Lock_policy)2>::_M_dispose() /usr/include/c++/14/bits/shared_ptr_base.h:616 (future_exception+0x96c9)
+    #10 std::_Sp_counted_base<(__gnu_cxx::_Lock_policy)2>::_M_release_last_use() /usr/include/c++/14/bits/shared_ptr_base.h:175 (future_exception+0x53f3) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #11 std::_Sp_counted_base<(__gnu_cxx::_Lock_policy)2>::_M_release() /usr/include/c++/14/bits/shared_ptr_base.h:361 (future_exception+0x4549) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #12 std::__shared_count<(__gnu_cxx::_Lock_policy)2>::~__shared_count() /usr/include/c++/14/bits/shared_ptr_base.h:1069 (future_exception+0x5528) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #13 std::__shared_ptr<std::__future_base::_State_baseV2, (__gnu_cxx::_Lock_policy)2>::~__shared_ptr() /usr/include/c++/14/bits/shared_ptr_base.h:1525 (future_exception+0x527f) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #14 std::shared_ptr<std::__future_base::_State_baseV2>::~shared_ptr() /usr/include/c++/14/bits/shared_ptr.h:175 (future_exception+0x52ab) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #15 std::promise<int>::~promise() /usr/include/c++/14/future:1135 (future_exception+0x618b) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #16 ~<lambda> /tmp/edgerpc-tsan-diagnostic/future_exception.cpp:11 (future_exception+0x35b3) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #17 ~_Head_base /usr/include/c++/14/tuple:197 (future_exception+0x38a7) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #18 ~_Tuple_impl /usr/include/c++/14/tuple:549 (future_exception+0x38d3) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #19 ~tuple /usr/include/c++/14/tuple:836 (future_exception+0x38ff) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #20 ~_Invoker /usr/include/c++/14/bits/std_thread.h:281 (future_exception+0x392b) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #21 ~_State_impl /usr/include/c++/14/bits/std_thread.h:243 (future_exception+0x3b53) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #22 ~_State_impl /usr/include/c++/14/bits/std_thread.h:243 (future_exception+0x3b8f) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #23 <null> <null> (libstdc++.so.6+0xe122c) (BuildId: 133b71e0013695cc7832680a74edb51008c4fc4c)
+
+  Previous read of size 4 at 0x722800000e50 by main thread:
+    #0 std::error_code::value() const /usr/include/c++/14/system_error:262 (future_exception+0x45e0) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+    #1 main /tmp/edgerpc-tsan-diagnostic/future_exception.cpp:17 (future_exception+0x3702) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+
+  Thread T23 (tid=52089, running) created by main thread at:
+    #0 pthread_create ../../../../src/libsanitizer/tsan/tsan_interceptors_posix.cpp:1022 (libtsan.so.2+0x568a6) (BuildId: 99ef88596cb10a8ccf307fe1a9070f66a44b1624)
+    #1 std::thread::_M_start_thread(std::unique_ptr<std::thread::_State, std::default_delete<std::thread::_State> >, void (*)()) <null> (libstdc++.so.6+0xe12f8) (BuildId: 133b71e0013695cc7832680a74edb51008c4fc4c)
+    #2 main /tmp/edgerpc-tsan-diagnostic/future_exception.cpp:14 (future_exception+0x362e) (BuildId: 053fca4c33239ac95c286338e31925ece3d741c5)
+
+SUMMARY: ThreadSanitizer: data race (/lib/x86_64-linux-gnu/libstdc++.so.6+0xb328c) (BuildId: 133b71e0013695cc7832680a74edb51008c4fc4c) in std::__exception_ptr::exception_ptr::_M_release()
+==================
+ThreadSanitizer: reported 1 warnings

@@ -1,0 +1,321 @@
+{
+  "run_url": "https://github.com/Somya2907/EdgeRPC/actions/runs/38967676383",
+  "commit_sha": [
+    "f2542f3ca39bbf09810baefd841876fa1fe284c6"
+  ],
+  "observed_at": "2026-10-16T21:13:23.187886+00:00",
+  "jobs": [
+    {
+      "name": "build-and-test (ubuntu-24.04-arm, Linux, arm64)",
+      "url": "https://github.com/Somya2907/EdgeRPC/actions/runs/38967676383/job/117198096482",
+      "completed": true,
+      "passed": true,
+      "steps": [
+        {
+          "name": "Set up job",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:02Z",
+          "completed-at": "2026-10-16T21:12:03Z"
+        },
+        {
+          "name": "Run actions/checkout@v5",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:03Z",
+          "completed-at": "2026-10-16T21:12:04Z"
+        },
+        {
+          "name": "Record native platform",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:04Z",
+          "completed-at": "2026-10-16T21:12:04Z"
+        },
+        {
+          "name": "Configure",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:04Z",
+          "completed-at": "2026-10-16T21:12:05Z"
+        },
+        {
+          "name": "Build",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:05Z",
+          "completed-at": "2026-10-16T21:12:15Z"
+        },
+        {
+          "name": "Validate tests and real process transports",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:15Z",
+          "completed-at": "2026-10-16T21:12:25Z"
+        },
+        {
+          "name": "Publish failure summary",
+          "conclusion": "skipped",
+          "started-at": "2026-10-16T21:12:25Z",
+          "completed-at": "2026-10-16T21:12:25Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v4",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:25Z",
+          "completed-at": "2026-10-16T21:12:26Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v5",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:26Z",
+          "completed-at": "2026-10-16T21:12:26Z"
+        },
+        {
+          "name": "Complete job",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:26Z",
+          "completed-at": "2026-10-16T21:12:26Z"
+        }
+      ]
+    },
+    {
+      "name": "build-and-test (macos-15, Darwin, arm64)",
+      "url": "https://github.com/Somya2907/EdgeRPC/actions/runs/38967676383/job/117198096721",
+      "completed": true,
+      "passed": true,
+      "steps": [
+        {
+          "name": "Set up job",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:09Z",
+          "completed-at": "2026-10-16T21:12:10Z"
+        },
+        {
+          "name": "Run actions/checkout@v5",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:10Z",
+          "completed-at": "2026-10-16T21:12:11Z"
+        },
+        {
+          "name": "Record native platform",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:11Z",
+          "completed-at": "2026-10-16T21:12:13Z"
+        },
+        {
+          "name": "Configure",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:13Z",
+          "completed-at": "2026-10-16T21:12:15Z"
+        },
+        {
+          "name": "Build",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:15Z",
+          "completed-at": "2026-10-16T21:12:25Z"
+        },
+        {
+          "name": "Validate tests and real process transports",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:25Z",
+          "completed-at": "2026-10-16T21:12:47Z"
+        },
+        {
+          "name": "Publish failure summary",
+          "conclusion": "skipped",
+          "started-at": "2026-10-16T21:12:47Z",
+          "completed-at": "2026-10-16T21:12:47Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v4",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:47Z",
+          "completed-at": "2026-10-16T21:12:48Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v5",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:48Z",
+          "completed-at": "2026-10-16T21:12:49Z"
+        },
+        {
+          "name": "Complete job",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:49Z",
+          "completed-at": "2026-10-16T21:12:49Z"
+        }
+      ]
+    },
+    {
+      "name": "build-and-test (ubuntu-24.04, Linux, x86_64)",
+      "url": "https://github.com/Somya2907/EdgeRPC/actions/runs/38967676383/job/117198096858",
+      "completed": true,
+      "passed": true,
+      "steps": [
+        {
+          "name": "Set up job",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:00Z",
+          "completed-at": "2026-10-16T21:12:01Z"
+        },
+        {
+          "name": "Run actions/checkout@v5",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:01Z",
+          "completed-at": "2026-10-16T21:12:01Z"
+        },
+        {
+          "name": "Record native platform",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:01Z",
+          "completed-at": "2026-10-16T21:12:01Z"
+        },
+        {
+          "name": "Configure",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:01Z",
+          "completed-at": "2026-10-16T21:12:03Z"
+        },
+        {
+          "name": "Build",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:03Z",
+          "completed-at": "2026-10-16T21:12:17Z"
+        },
+        {
+          "name": "Validate tests and real process transports",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:17Z",
+          "completed-at": "2026-10-16T21:12:28Z"
+        },
+        {
+          "name": "Publish failure summary",
+          "conclusion": "skipped",
+          "started-at": "2026-10-16T21:12:28Z",
+          "completed-at": "2026-10-16T21:12:28Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v4",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:28Z",
+          "completed-at": "2026-10-16T21:12:29Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v5",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:29Z",
+          "completed-at": "2026-10-16T21:12:29Z"
+        },
+        {
+          "name": "Complete job",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:29Z",
+          "completed-at": "2026-10-16T21:12:29Z"
+        }
+      ]
+    },
+    {
+      "name": "container (ubuntu-24.04)",
+      "url": "https://github.com/Somya2907/EdgeRPC/actions/runs/38967676383/job/117198096881",
+      "completed": true,
+      "passed": true,
+      "steps": [
+        {
+          "name": "Set up job",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:00Z",
+          "completed-at": "2026-10-16T21:12:01Z"
+        },
+        {
+          "name": "Run actions/checkout@v5",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:01Z",
+          "completed-at": "2026-10-16T21:12:01Z"
+        },
+        {
+          "name": "Build native container",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:01Z",
+          "completed-at": "2026-10-16T21:12:44Z"
+        },
+        {
+          "name": "Run container checks",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:44Z",
+          "completed-at": "2026-10-16T21:12:54Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v4",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:54Z",
+          "completed-at": "2026-10-16T21:12:55Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v5",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:55Z",
+          "completed-at": "2026-10-16T21:12:55Z"
+        },
+        {
+          "name": "Complete job",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:55Z",
+          "completed-at": "2026-10-16T21:12:55Z"
+        }
+      ]
+    },
+    {
+      "name": "container (ubuntu-24.04-arm)",
+      "url": "https://github.com/Somya2907/EdgeRPC/actions/runs/38967676383/job/117198096932",
+      "completed": true,
+      "passed": true,
+      "steps": [
+        {
+          "name": "Set up job",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:03Z",
+          "completed-at": "2026-10-16T21:12:04Z"
+        },
+        {
+          "name": "Run actions/checkout@v5",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:04Z",
+          "completed-at": "2026-10-16T21:12:05Z"
+        },
+        {
+          "name": "Build native container",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:05Z",
+          "completed-at": "2026-10-16T21:12:46Z"
+        },
+        {
+          "name": "Run container checks",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:46Z",
+          "completed-at": "2026-10-16T21:12:56Z"
+        },
+        {
+          "name": "Run actions/upload-artifact@v4",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:56Z",
+          "completed-at": "2026-10-16T21:12:57Z"
+        },
+        {
+          "name": "Post Run actions/checkout@v5",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:57Z",
+          "completed-at": "2026-10-16T21:12:57Z"
+        },
+        {
+          "name": "Complete job",
+          "conclusion": "success",
+          "started-at": "2026-10-16T21:12:57Z",
+          "completed-at": "2026-10-16T21:12:57Z"
+        }
+      ]
+    }
+  ],
+  "errors": [
+    "https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/",
+    "https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/",
+    "https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/",
+    "https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/",
+    "https://github.blog/changelog/2025-09-19-deprecation-of-node-20-on-github-actions-runners/"
+  ],
+  "passed": true
+}

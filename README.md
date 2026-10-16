@@ -4,7 +4,7 @@ A C++17 client/server runtime for studying inference RPC across processes. A cli
 
 This is a software prototype inspired by heterogeneous inference communication. It does **not** implement Qualcomm FastRPC, execute on an NPU, or measure CPU–NPU transfers.
 
-## Current milestone: measured transport comparisons
+## Current milestone: native portability and reliability
 
 - Reusable `edgerpc` library, server, demo client, and benchmark.
 - Thread-safe `infer_async()` submissions, futures, request-ID matching, and shared sync/async transport.
@@ -18,8 +18,9 @@ This is a software prototype inspired by heterogeneous inference communication. 
 - Correctness and failure tests that run separate server/client processes.
 - Warm-up-separated measurements, per-request CSV, p50/p95/p99, and throughput.
 - Optional stage telemetry across transports, measured socket bytes, repeated-trial reports and exported charts.
+- Native Linux x86_64/ARM64 and macOS Apple Silicon CI, an Ubuntu validation image, and concurrent/crash/overload stress checks.
 
-Synchronous RPC, async execution, shared memory, reusable buffers, and repeated benchmark comparisons are implemented. Target-platform validation and release work remain in [the completion roadmap](docs/completion-plan.md). The server serves one active client connection at a time and supports multiple outstanding requests within it. Client submissions may come from multiple threads.
+Synchronous RPC, async execution, shared memory, reusable buffers, repeated benchmark comparisons, and native platform validation are implemented. Documentation/release completion is phase 6 in [the completion roadmap](docs/completion-plan.md). The server serves one active client connection at a time and supports multiple outstanding requests within it. Client submissions may come from multiple threads.
 
 ## Build and test
 
@@ -140,7 +141,17 @@ future <- ID matching <- receiver <- Unix socket <- worker(s): 2*x+1 / noop
 
 See [the wire protocol](docs/protocol.md), [shared-memory ownership](docs/shared-memory.md), and [architecture and next steps](docs/architecture.md).
 
-Linux CTest includes 11 protocol/backend/metrics groups, 30 async/concurrency groups, six buffer/descriptor groups, four pool/wire/state groups, 39 process integration tests, and 15 benchmark-analysis tests. Coverage includes zero/max tensors, independent mappings, invalid metadata/permissions, reversed replies, allocation/registration failures, pool ownership, overload, disconnect/crash recovery, 1,000-request stress runs, timed maximum responses, actual/partial byte counts, configuration propagation, and invalid/incomplete report rejection. The allocation-failure injection is Linux-specific; other groups are shared with macOS. Checks remain active in Release builds.
+Linux CTest includes 11 protocol/backend/metrics groups, 30 async/concurrency groups, six buffer/descriptor groups, four pool/wire/state groups, 39 process integration tests, 16 benchmark-analysis tests, and nine reliability tests. Coverage includes zero/max tensors, independent mappings, invalid metadata/permissions, reversed replies, allocation/registration failures, pool ownership, overload, disconnect/crash recovery, thousands of concurrent submissions, timed maximum responses, actual/partial byte counts, configuration propagation, and invalid/incomplete report rejection. The allocation-failure injection is Linux-specific; other groups are shared with macOS. Checks remain active in Release builds.
+
+For full tests plus real-process socket/SHM/pool smoke checks, or the unprivileged container workflow:
+
+```sh
+python3 scripts/validate_platform.py
+docker build -f docker/Dockerfile -t edgerpc:validation .
+docker run --rm --shm-size=256m edgerpc:validation
+```
+
+[Portability and reliability](docs/portability.md) records verified CI jobs, stress scenarios, Docker details, sanitizer commands and limitations.
 
 For a sanitizer build:
 
@@ -152,4 +163,4 @@ ctest --test-dir build-sanitize --output-on-failure
 
 This is a **same-user, trusted-client local demo**. Socket/SHM permissions are 0600; use a private socket directory. One client can occupy the server until it disconnects or becomes idle with no work outstanding. Queue limits bound request counts; choose lower capacities for large tensors (each maximum SHM request reserves 16 MiB before vector copies). There is no authentication, per-request cancellation, fair multi-client scheduling, or multi-tenant isolation. A killed process may leave a socket path; the next server reclaims it after a refused connection probe. SHM names are removed at server admission; killing a client before admission can leave an orphan requiring identified-name cleanup. Existing regular files, symlinks, and active sockets are preserved.
 
-The current version is validated on Linux x86_64. CI is configured for Linux and macOS; macOS/Apple Silicon behavior still needs a run on that platform. Docker/ARM64 and hardware backends remain future work.
+Release validation passes on native Linux x86_64, Linux ARM64 and macOS ARM64, including native Linux Docker builds on both architectures. Linux ASan/UBSan passes. The optional ThreadSanitizer run has a documented system C++ library exception warning reproduced independently of EdgeRPC; its final run is not recorded as clean. Accelerator hardware backends remain future work.

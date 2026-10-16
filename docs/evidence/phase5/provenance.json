@@ -1,0 +1,113 @@
+{
+  "recorded_at": "2026-10-16T21:17:34.074879+00:00",
+  "code_commit": "f2542f3ca39bbf09810baefd841876fa1fe284c6",
+  "system": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "machine": "x86_64",
+  "compiler": "c++ (Debian 14.2.0-19) 14.2.0",
+  "cmake": "cmake version 3.31.6",
+  "python": "3.12.14",
+  "commands": {
+    "release": [
+      "cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release -DEDGERPC_SANITIZERS=OFF -DEDGERPC_THREAD_SANITIZER=OFF",
+      "cmake --build build --parallel 4",
+      "python3 scripts/validate_platform.py --output results/phase5-final-host --expected-system Linux --expected-machine x86_64"
+    ],
+    "asan": [
+      "cmake -S . -B build-sanitize -G Ninja -DCMAKE_BUILD_TYPE=Debug -DEDGERPC_SANITIZERS=ON -DEDGERPC_THREAD_SANITIZER=OFF",
+      "cmake --build build-sanitize --parallel 4",
+      "ctest --test-dir build-sanitize --output-on-failure"
+    ],
+    "tsan": [
+      "cmake -S . -B build-tsan -G Ninja -DCMAKE_BUILD_TYPE=Debug -DEDGERPC_SANITIZERS=OFF -DEDGERPC_THREAD_SANITIZER=ON",
+      "cmake --build build-tsan --parallel 4",
+      "ctest --test-dir build-tsan --output-on-failure"
+    ],
+    "repeated_stress": "ctest --test-dir build --repeat until-fail:10 -R '^(async|buffer_pool|reliability)$' --output-on-failure",
+    "comparison_smoke": "python3 scripts/run_comparisons.py --smoke --output results/phase5-comparison-smoke",
+    "sanitized_comparison_rejection": "python3 scripts/run_comparisons.py --build-dir build-tsan --smoke --no-plots",
+    "stdlib_reproducer": [
+      "c++ -std=c++17 -g -fsanitize=thread -pthread tsan-standard-library.cpp -o /tmp/edgerpc-tsan-reproducer",
+      "/tmp/edgerpc-tsan-reproducer"
+    ],
+    "docker": [
+      "docker build --network=host [existing proxy variable names forwarded; configured host resolved dynamically] -f docker/Dockerfile -t edgerpc:phase5-final .",
+      "docker run --name UNIQUE_NAME --shm-size=256m edgerpc:phase5-final",
+      "docker cp UNIQUE_NAME:/tmp/edgerpc-validation results/phase5-final-container",
+      "docker rm -f UNIQUE_NAME"
+    ]
+  },
+  "source_sha256": {
+    ".dockerignore": "de981a2997c80a710259c466e8c4129c05c70132d83cc254e6fe6e1d61e25994",
+    ".github/workflows/ci.yml": "ff7edabe1461c2a001afa8bf0c9055ac1836e947a453a4000b9d7cbb93893a06",
+    "CMakeLists.txt": "1fabde98fe775a2bb95d3f7a7f752bef349ccfc0445cda9cbda916ba975ee19f",
+    "apps/cli.hpp": "3e4c32253c5fb31d579b120ef762700872a8c6444696b3792fb0324e6b697195",
+    "apps/edgerpc_demo.cpp": "7bbb8302bdfd20a5f8be053dd7c5f6cb286b41b2872821e8ab3bbc26e34fafa4",
+    "apps/edgerpc_server.cpp": "f26aa9b88a0ffb7a5cb2bf52201abf7261e839a8a0deba56f10f96a36ed159a9",
+    "apps/edgerpc_stress.cpp": "96b4fc94b3bf2493a2f43caee16390018d16456befaf50022d5a0170e2cc979b",
+    "benchmarks/benchmark.cpp": "eac1121fc17ee26a67e517b6cdd51bd771f799a8e8c2e9f0207df8124cf79720",
+    "benchmarks/plot_results.py": "c463fd33541ba7c6e265c2aa3b70eb79a9a4596b6d6240142ba25137498ac543",
+    "benchmarks/report.py": "c535cb397f6582cbb3ac329c094bbe2c67f97bb103147a833de28f4e74fd62ff",
+    "benchmarks/requirements.txt": "846326bcdba0b16d8541ec867f06f115e423a748d0e7dba5710761fa19e6e2a8",
+    "docker/Dockerfile": "56ce145f4be674678716c10c7a5ba71f7ecb55dd7cb1b1fb6ad5cee5be5ad9d0",
+    "include/edgerpc/buffer_pool.hpp": "3a6a4828bbf3d5180399f93ee39af56d94acae6b1ed461bba8f9b3faeb0be0f4",
+    "include/edgerpc/client.hpp": "3b2c6064ada4718d4fff7605162ab2f088763550ef983967aec4170af1738921",
+    "include/edgerpc/executor.hpp": "2c7b5c5f02452603d283a1645f8c1125714c86fc4e41ab36bf16e34fa50a448f",
+    "include/edgerpc/metrics.hpp": "57c67d6f5507d7ae36424a6b244ec6c8dd552ceb365817339d868ed9e4e5281c",
+    "include/edgerpc/mock_executor.hpp": "336035eb579a5d9b12eaa425d626c12eba0c8c75a0eb82cfb6f1c923ffe69c73",
+    "include/edgerpc/protocol.hpp": "d935bbb2112f0d9f2ae98ed918f440815032eccd76b395e9523fc65c10b9e236",
+    "include/edgerpc/server.hpp": "7f951dafee31391fb337739b9af7b1fdff77314f1c284b93b70e5abdc192d468",
+    "include/edgerpc/shared_buffer.hpp": "6ad336366bddcc827f1dacdf17923e61bf347604001212e79f8b7e67dca11164",
+    "include/edgerpc/thread_pool.hpp": "a3294a6f6cfbd78068661435020df49c1694fef0be76917306fac5efa2f1e064",
+    "include/edgerpc/transport.hpp": "54828a49bcf782e6e2ecd7bbd5e4ca7d7d76ff4ff74aef5dd1e98790e7d36f86",
+    "scripts/analyze_pipeline.py": "af3d262386c9bbb23ffd44b872e601bcc2102a9bde233cf7a73c913f67e86d86",
+    "scripts/run_benchmarks.sh": "9cfc6cc412b9080cd5d47ee6f35307710fd8eb1e42765d84f9152e82d7ff0dc7",
+    "scripts/run_comparisons.py": "02795f257c111fa7401bdeb46087a8b2f19dde3ff42c7ceb04c059b00b4602bd",
+    "scripts/run_pipeline_benchmarks.sh": "d69796a94c05a9e437482acc0010bc7f0146f3327fbcdc9b86d92a56d6a7f661",
+    "scripts/run_smoke_test.sh": "b178085eb1bb8cf848bc8117d0df9c9df4a6f5e02516d6ac707c7b2a99a481fe",
+    "scripts/validate_platform.py": "03d7e71c856c3d9634a61e97d574ade7ce0096080e0662e96ae3530d538c4e49",
+    "src/buffer_pool.cpp": "2f4c87f2f066eed810952b4bf2f49142e5c2dc84f3483fb52ef716c255d8075f",
+    "src/client.cpp": "6aea7338ead9afa8ce7e13e038beb404809adb262fd911cbb9f42c17a958428a",
+    "src/metrics.cpp": "c6ecc22fc1bacb5ef8f87d498301894604c2c3ea205519970126d71c32707ade",
+    "src/mock_executor.cpp": "764cc2b8140a0eb70c573a8296256d4b8fd27b056c246c73a7c4e914a9b6049b",
+    "src/protocol.cpp": "0d0be29c932aa2f7120a448418ebc5b7602e9c2848b9d638d4ded71ba4ddf22a",
+    "src/server.cpp": "72e3bef124e2a0a08eb56278f67d0f97dabd626842fb6c1f0c48b1fa8e645698",
+    "src/shared_buffer_posix.cpp": "796efe3b03d8c3c0629d361a578d3f78e37963a741bc0aaf3db8b70aa2c0e730",
+    "src/thread_pool.cpp": "d2b6ebe7ef9f85ca2b346fd8732ca1fad2cb226a7b3d5060b81986550651a11e",
+    "src/transport_unix.cpp": "2affd9ea3a7af7a4dd798ea6a35af5120c553c953e586865bbc31f586cffa397",
+    "tests/test_async.cpp": "a1924f88ed4e193c4ae22ffdd71a39c2caf81ed8b6add92b05af5ed0272167bd",
+    "tests/test_benchmarks.py": "327860b77631a2ef2f9da6cea33d0fa9077c477b105cbfa8a0029365733de6f4",
+    "tests/test_buffer_pool.cpp": "145c5ec63ccc36d78291132dbcb9800cb7b75e980804e71d46d94111d43e99c0",
+    "tests/test_integration.py": "9d68c7f0a4c7d0d21903b1c21b4a4d2eacfc5af7a978fd395d06e322c45f1e0a",
+    "tests/test_protocol.cpp": "77528228b033aa03e6a06bcc59ed7447e6940ee27878c80ee0ea6c7701923431",
+    "tests/test_shared_memory.cpp": "7ddfb280c6c6b6d859a0d056c6c3234205a3785db0935054afbbf7f6aab820f1",
+    "tests/test_stress.py": "65e208d8abfa994383aae02271fb3e01cbda192792661109b0492b73aba79723"
+  },
+  "results": {
+    "release": "passed: seven suites and 18 platform checks",
+    "asan": "passed: seven suites",
+    "tsan": "failed (ctest exit 8): six suites passed, async reports libstdc++ exception-lifetime warning",
+    "stdlib_reproducer": "exit 66: same warning with no EdgeRPC code",
+    "repeated_stress": "exit 0: async/pool/reliability repeated ten times each",
+    "container": "passed: seven build-time suites and 18 unprivileged runtime checks",
+    "comparison_smoke": "passed; functional only",
+    "sanitized_comparison": "rejected before trials as intended"
+  },
+  "docker": {
+    "image_id": "sha256:c889fa59250186c342eb626436f95bf9a6bc098908f1e3f65b3baff1ed6599ba",
+    "architecture": "amd64",
+    "os": "linux",
+    "user": "edgerpc",
+    "shm_size": 268435456,
+    "runtime_returncode": 0,
+    "base_repo_digests": [
+      "ubuntu@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55"
+    ]
+  },
+  "limitations": [
+    "Remote CI status observed from public HTML; full remote artifacts not downloaded.",
+    "TSan result is unsuppressed and not clean. Independent standard-library reproducer retained.",
+    "Repeated stress preceded the Darwin-only deadline fix and final benchmark guard; selected Linux behavior unchanged.",
+    "Comparison smoke is functional; no performance conclusions. It can overlap other validation work.",
+    "No image, release or tag published."
+  ]
+}

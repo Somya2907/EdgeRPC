@@ -20,6 +20,8 @@ The library client increments IDs within each connection and maps them to pendin
 
 `read_exact` and `write_all` handle short transfers, EINTR, and EAGAIN with `poll` and a monotonic deadline. A clean EOF at a frame boundary ends the connection normally. EOF mid-header or mid-payload is an error. SIGPIPE is suppressed for socket writes using `MSG_NOSIGNAL` on Linux or `SO_NOSIGPIPE` on macOS.
 
+On Darwin, `write_all` ensures `O_NONBLOCK` on the supplied descriptor and leaves it enabled: `MSG_DONTWAIT` alone does not prevent every kernel buffer-space wait. Runtime connections are already nonblocking. Native blocked-write deadline coverage is recorded in [the portability checks](portability.md).
+
 The deadline applies separately to each header and payload read/write; it is not a total RPC timeout. The default is five seconds. The client starts receiving once a request is prepared for transmission; its receive deadline includes sending and waiting for the first reply. With no prepared requests awaiting replies, the receiver waits on a condition variable without reading. Local SHM allocation failures do not start that deadline or poison other requests. Continued replies can keep the connection active while another request waits: per-request execution deadlines are not implemented. Server idle deadlines run only when no execution is outstanding. A timeout does not cancel already-running backend execution. Half-closing/disconnecting abandons outstanding requests; the server cancels waiting tasks and joins executing tasks before reusing descriptors. Framing provides no encryption or authentication; the supported boundary is a trusted local user.
 
 ## Shared-memory descriptor
