@@ -16,7 +16,8 @@ add_library(edgerpc
     src/transport_unix.cpp
     src/client.cpp
     src/server.cpp
-    src/mock_executor.cpp)
+    src/mock_executor.cpp
+    src/metrics.cpp)
 target_include_directories(edgerpc PUBLIC include)
 target_link_libraries(edgerpc PUBLIC Threads::Threads)
 target_compile_options(edgerpc PRIVATE -Wall -Wextra -Wpedantic)
@@ -27,7 +28,8 @@ endif()
 
 add_executable(edgerpc_server apps/edgerpc_server.cpp)
 add_executable(edgerpc_demo apps/edgerpc_demo.cpp)
-foreach(app edgerpc_server edgerpc_demo)
+add_executable(edgerpc_benchmark benchmarks/benchmark.cpp)
+foreach(app edgerpc_server edgerpc_demo edgerpc_benchmark)
     target_link_libraries(${app} PRIVATE edgerpc)
     target_include_directories(${app} PRIVATE apps)
     target_compile_options(${app} PRIVATE -Wall -Wextra -Wpedantic)
