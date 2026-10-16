@@ -30,7 +30,8 @@ int main(int argc, char** argv) {
             args.number("--delay-us", 0, 0, 1000000)});
         struct sigaction action{};
         action.sa_handler = request_stop;
-        ::sigemptyset(&action.sa_mask);
+        // Darwin exposes sigemptyset as a macro; a leading :: breaks expansion.
+        sigemptyset(&action.sa_mask);
         if (::sigaction(SIGINT, &action, nullptr) < 0 || ::sigaction(SIGTERM, &action, nullptr) < 0)
             throw std::runtime_error("cannot install shutdown signal handlers");
         ::umask(0077);
