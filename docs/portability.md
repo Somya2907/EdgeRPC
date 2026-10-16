@@ -197,6 +197,7 @@ both sanitizer options OFF; the comparison runner rejects sanitized builds.
   [`sosendcheck` implementation](https://github.com/apple-oss-distributions/xnu/blob/main/bsd/kern/uipc_socket.c).
 
 The complete native suites and maximum-size process checks passed after these
-fixes. Phase 6 remains documentation/release completion, including fresh-checkout
-reproduction and the user's release/tag policy. Hardware backends and actual
+fixes. Phase 6 subsequently completed [documentation and fresh-checkout
+verification](evidence/phase6/README.md), with release notes prepared and
+tagging/publication deferred by the user's policy. Hardware backends and actual
 accelerator measurements remain separate follow-ups.

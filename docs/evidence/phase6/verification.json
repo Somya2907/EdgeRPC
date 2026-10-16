@@ -1,0 +1,442 @@
+{
+  "status": "passed",
+  "started_at": "2026-10-16T21:41:40.889004+00:00",
+  "system": "Linux-6.18.44-x86_64-with-glibc2.41",
+  "machine": "x86_64",
+  "clone_url": "https://github.com/Somya2907/EdgeRPC.git",
+  "workdir": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC",
+  "commands": [
+    {
+      "name": "clone",
+      "command": [
+        "git",
+        "clone",
+        "https://github.com/Somya2907/EdgeRPC.git",
+        "EdgeRPC"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h",
+      "log": "clone.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "configure",
+      "command": [
+        "cmake",
+        "-S",
+        ".",
+        "-B",
+        "build",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DEDGERPC_SANITIZERS=OFF",
+        "-DEDGERPC_THREAD_SANITIZER=OFF"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC",
+      "log": "configure.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "build",
+      "command": [
+        "cmake",
+        "--build",
+        "build",
+        "--parallel",
+        "4"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC",
+      "log": "build.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "platform",
+      "command": [
+        "python3",
+        "scripts/validate_platform.py",
+        "--output",
+        "/tmp/erpc-phase6-1ucs3d4h/verification/platform"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC",
+      "log": "platform.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "create-chart-venv",
+      "command": [
+        "python3",
+        "-m",
+        "venv",
+        ".venv"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC",
+      "log": "create-chart-venv.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "install-charts",
+      "command": [
+        ".venv/bin/python",
+        "-m",
+        "pip",
+        "install",
+        "-r",
+        "benchmarks/requirements.txt"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC",
+      "log": "install-charts.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "comparison-smoke",
+      "command": [
+        ".venv/bin/python",
+        "scripts/run_comparisons.py",
+        "--smoke",
+        "--output",
+        "/tmp/erpc-phase6-1ucs3d4h/verification/comparison-smoke"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC",
+      "log": "comparison-smoke.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "chart-packages",
+      "command": [
+        ".venv/bin/python",
+        "-m",
+        "pip",
+        "freeze"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC",
+      "log": "chart-packages.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "checksums-benchmarks-v0.5",
+      "command": [
+        "sha256sum",
+        "-c",
+        "SHA256SUMS"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC/docs/evidence/benchmarks-v0.5",
+      "log": "checksums-benchmarks-v0.5.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "checksums-phase5",
+      "command": [
+        "sha256sum",
+        "-c",
+        "SHA256SUMS"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC/docs/evidence/phase5",
+      "log": "checksums-phase5.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "extract-phase4",
+      "command": [
+        "tar",
+        "-xzf",
+        "docs/evidence/benchmarks-v0.5/raw-trials.tar.gz",
+        "-C",
+        "/tmp/erpc-phase6-1ucs3d4h/verification/regenerated-phase4"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC",
+      "log": "extract-phase4.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "regenerate-report",
+      "command": [
+        "python3",
+        "benchmarks/report.py",
+        "/tmp/erpc-phase6-1ucs3d4h/verification/regenerated-phase4",
+        "--no-plots"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC",
+      "log": "regenerate-report.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "compile-readme-api",
+      "command": [
+        "c++",
+        "-std=c++17",
+        "-I/tmp/erpc-phase6-1ucs3d4h/EdgeRPC/include",
+        "/tmp/erpc-phase6-1ucs3d4h/readme-api.cpp",
+        "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC/build/libedgerpc.a",
+        "-pthread",
+        "-o",
+        "/tmp/erpc-phase6-1ucs3d4h/readme-api"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC",
+      "log": "compile-readme-api.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "interactive-server",
+      "command": [
+        "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC/build/edgerpc_server",
+        "--socket",
+        "/tmp/erpc-demo-h1a2q2j3/rpc.sock",
+        "--workers",
+        "1"
+      ],
+      "log": "interactive-server.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "demo-sync",
+      "command": [
+        "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC/build/edgerpc_demo",
+        "--socket",
+        "/tmp/erpc-demo-h1a2q2j3/rpc.sock",
+        "--mode",
+        "sync",
+        "--elements",
+        "1024",
+        "--verify"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC",
+      "log": "demo-sync.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "demo-async",
+      "command": [
+        "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC/build/edgerpc_demo",
+        "--socket",
+        "/tmp/erpc-demo-h1a2q2j3/rpc.sock",
+        "--mode",
+        "async",
+        "--requests",
+        "32",
+        "--verify"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC",
+      "log": "demo-async.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "demo-shm",
+      "command": [
+        "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC/build/edgerpc_demo",
+        "--socket",
+        "/tmp/erpc-demo-h1a2q2j3/rpc.sock",
+        "--mode",
+        "async",
+        "--transport",
+        "shm",
+        "--requests",
+        "32",
+        "--verify"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC",
+      "log": "demo-shm.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "demo-pool",
+      "command": [
+        "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC/build/edgerpc_demo",
+        "--socket",
+        "/tmp/erpc-demo-h1a2q2j3/rpc.sock",
+        "--mode",
+        "async",
+        "--transport",
+        "pool",
+        "--buffer-slots",
+        "2",
+        "--requests",
+        "32",
+        "--verify"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC",
+      "log": "demo-pool.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "execute-readme-api",
+      "command": [
+        "/tmp/erpc-phase6-1ucs3d4h/readme-api",
+        "/tmp/erpc-demo-h1a2q2j3/rpc.sock"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC",
+      "log": "execute-readme-api.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "library-only-configure",
+      "command": [
+        "cmake",
+        "-S",
+        ".",
+        "-B",
+        "build-library",
+        "-DCMAKE_BUILD_TYPE=Release",
+        "-DBUILD_TESTING=OFF"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC",
+      "log": "library-only-configure.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "library-only-build",
+      "command": [
+        "cmake",
+        "--build",
+        "build-library",
+        "--parallel",
+        "4"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC",
+      "log": "library-only-build.log",
+      "status": "passed",
+      "returncode": 0
+    },
+    {
+      "name": "source-status",
+      "command": [
+        "git",
+        "status",
+        "--porcelain"
+      ],
+      "cwd": "/tmp/erpc-phase6-1ucs3d4h/EdgeRPC",
+      "log": "source-status.log",
+      "status": "passed",
+      "returncode": 0
+    }
+  ],
+  "commit": "f43d429341bb60631bbab220b722da6cb7a48d8b",
+  "fresh_before_configure": true,
+  "compiler": "c++ (Debian 14.2.0-19) 14.2.0",
+  "cmake": "cmake version 3.31.6",
+  "python": "Python 3.12.14",
+  "matplotlib": "3.11.2",
+  "regenerated_tables_match_retained": true,
+  "interactive_socket_removed": true,
+  "tracked_sha256": {
+    ".dockerignore": "331ca623c1b5a2434bdce363b29b88c3e1275257950a8d2dfd670f15d1927546",
+    ".github/workflows/ci.yml": "ff7edabe1461c2a001afa8bf0c9055ac1836e947a453a4000b9d7cbb93893a06",
+    ".gitignore": "d49c4a403ec428c413e5b8c03c491361a4a7a84bfafb2e4024681246ab04da2b",
+    "CMakeLists.txt": "1fabde98fe775a2bb95d3f7a7f752bef349ccfc0445cda9cbda916ba975ee19f",
+    "Plan.md": "06ec0579e5d4b767ad3dcb86befdebb2d06feaa9858294d41c46d8c0cdb80263",
+    "README.md": "af5e05346a6ff7061bbf8f3150b1d9f886d3fbcf3254a34c1bc50f46eca18088",
+    "apps/cli.hpp": "3e4c32253c5fb31d579b120ef762700872a8c6444696b3792fb0324e6b697195",
+    "apps/edgerpc_demo.cpp": "7bbb8302bdfd20a5f8be053dd7c5f6cb286b41b2872821e8ab3bbc26e34fafa4",
+    "apps/edgerpc_server.cpp": "f26aa9b88a0ffb7a5cb2bf52201abf7261e839a8a0deba56f10f96a36ed159a9",
+    "apps/edgerpc_stress.cpp": "96b4fc94b3bf2493a2f43caee16390018d16456befaf50022d5a0170e2cc979b",
+    "benchmarks/benchmark.cpp": "eac1121fc17ee26a67e517b6cdd51bd771f799a8e8c2e9f0207df8124cf79720",
+    "benchmarks/plot_results.py": "c463fd33541ba7c6e265c2aa3b70eb79a9a4596b6d6240142ba25137498ac543",
+    "benchmarks/report.py": "c535cb397f6582cbb3ac329c094bbe2c67f97bb103147a833de28f4e74fd62ff",
+    "benchmarks/requirements.txt": "846326bcdba0b16d8541ec867f06f115e423a748d0e7dba5710761fa19e6e2a8",
+    "docker/Dockerfile": "56ce145f4be674678716c10c7a5ba71f7ecb55dd7cb1b1fb6ad5cee5be5ad9d0",
+    "docs/architecture.md": "33f099ecdd2cd05a4c1cc0077d414fea8147f5379e5e4bd2e04330caa8f6d8b1",
+    "docs/backend-extension.md": "c0bd60198712e50afd2a2682d07763a67271ca9181eb6019e8aac8ad60223096",
+    "docs/benchmark-results.md": "7e3146d0f12475b54b514d1e87826e55c1c1c9c4b6448bcc7217df339dbebabf",
+    "docs/benchmarks.md": "904d747021ed7240684cc68a1d50e8e954417e625d021f2010f0da41c2968ea9",
+    "docs/completion-plan.md": "75c4002e1011d1dd32e94fe5789fb016fe8ae646c93c5682609f30f0fe2d0fcf",
+    "docs/evidence/benchmarks-v0.5/SHA256SUMS": "6b8b28fe8a0ea4ef82d7a6d7577803451b657ea82f220d84063896b86c152e09",
+    "docs/evidence/benchmarks-v0.5/concurrency.png": "94b9125d6d5bb254f51aa29acba7ba611f0c9540d6318f1fec0b4c47260a4d0d",
+    "docs/evidence/benchmarks-v0.5/concurrency.svg": "3b6fac1ce527d3d0b6790825f336ea1b44781e7370c74fb3024e5033ca47f178",
+    "docs/evidence/benchmarks-v0.5/latency.png": "df00bf2ed066069ebe849b056b233e39925eb744a3605b6405e404d0298b4a10",
+    "docs/evidence/benchmarks-v0.5/latency.svg": "ccf64d0440a0f84a181af401393e3bc15586817a5847d238e02c5e64f8142216",
+    "docs/evidence/benchmarks-v0.5/manifest.json": "ad2e48e432d4989d21266c18130ff1efe409edca2c995d1654d4ae843e65ff5c",
+    "docs/evidence/benchmarks-v0.5/metadata.json": "f854ce6c47696de6bf3519545f126c3ae7a09bc638bde738814a4550c197e73e",
+    "docs/evidence/benchmarks-v0.5/raw-trials.tar.gz": "6e87be5176b4b8c96e43a5fcb98f1b95a1fb8071c429e9226be29133d52564d4",
+    "docs/evidence/benchmarks-v0.5/rejected-batch-diagnostic.json": "273be9a151a0eb208109195a54337c0ba21ead4110bfc0446d1da8e4b72fbf45",
+    "docs/evidence/benchmarks-v0.5/report-provenance.json": "b02d7c08adb5b7e9d3b84f471bbafff2345fb55083a3facd08240d99d5caf785",
+    "docs/evidence/benchmarks-v0.5/report.md": "4924d60a2c969ba04f503e3b321d466ed69eef95aed5a07f718236e6e20a5ff6",
+    "docs/evidence/benchmarks-v0.5/stages.png": "fff0e5ac3d8202529c0ed66d734cba0ae2fac47d4c7e94e9dc10f7e2d4183268",
+    "docs/evidence/benchmarks-v0.5/stages.svg": "fbf151ecc42a193653ca951e253bea7cc2f0c937d711ac2468abaa7b14df9633",
+    "docs/evidence/benchmarks-v0.5/startup.png": "0a56c2fba1421d813cd4615de92c4b1ebf633a6db50e9111198e7b82eaa75287",
+    "docs/evidence/benchmarks-v0.5/startup.svg": "dadf152b82288701da4f570c25112570ea96235003df2ee29141437cdc6a689c",
+    "docs/evidence/benchmarks-v0.5/summary.csv": "2f555eb053c81a6c2e0d20ae2335ab5dcf9f12c4f3c2d84c1165263306a19aef",
+    "docs/evidence/benchmarks-v0.5/throughput.png": "5abbe9949625dc6440e4072381b8a34334df74771af48bfe33229452ba1471bf",
+    "docs/evidence/benchmarks-v0.5/throughput.svg": "cc72a50122842d9a0db023c8bac248a86875de505ac1057bdf61260f4996b7f1",
+    "docs/evidence/benchmarks-v0.5/traffic.png": "7c19e23e6264aa1adf637ac19d36ab5ec5399ff3d2c3d0be9fd3e3f0e1fe959a",
+    "docs/evidence/benchmarks-v0.5/traffic.svg": "730ae62496b0937fb74e5e0a6dca942170f08f2625f82f856ee70025dc703532",
+    "docs/evidence/benchmarks-v0.5/trials.csv": "c8bd601d9a20ec66e426d497ae6a4ea69dcfb439b9b8f3929d07a76b3ed1cbc3",
+    "docs/evidence/phase5/README.md": "f7a68caf4305a32ac78de2b4d90fed284816e84f6348b40208bae0bbeaf06a49",
+    "docs/evidence/phase5/SHA256SUMS": "5b99d588d5f27966a05a5daa18562f8cdb31ec97e785d55d4a6c88554bc32064",
+    "docs/evidence/phase5/ci-status.json": "2610fcbe5fba0bc68bc86597896f28b4d33459923ff4c5c9d5b865ad170d9434",
+    "docs/evidence/phase5/local-validation.tar.gz": "74250cf9049aa3c9e9d4b1693d23285ffcbd14973e009404cd5d65eea3232d3f",
+    "docs/evidence/phase5/provenance.json": "64adaeb7d18595c8a49998d5daf76aeacc063cbc33fbc42c7c66344a05c41a66",
+    "docs/evidence/phase5/tsan-standard-library.cpp": "a6ebd47d95c254315ba9ace086b1483ec31afcf04bb74544be77288029526237",
+    "docs/evidence/phase5/tsan-standard-library.log": "5b609b09369b5589f7874f6f150b2307d4450d07bb632ee4f67ffa51a69ffc4e",
+    "docs/evidence/phase6/README.md": "c14d0cdefb71d021cf119590ba0c40634b3db3380a94cc8fad85cc91e0d3152f",
+    "docs/evidence/pipeline-v0.4/metadata.json": "ef0f0b224643dd9eaedad0dba16c84481da5499c3792f13e9c0c3a5d3e7fc769",
+    "docs/evidence/pipeline-v0.4/overlap.json": "d62b0bd5bc6ae0d1990bbfd30b7472db5d6bbf74acdcdb63f2de350b9ad64163",
+    "docs/evidence/pipeline-v0.4/server.log": "a8cff4389a58f8684ad25591d4dd36fb0c31205a850c35c892bb1100b24d213f",
+    "docs/evidence/pipeline-v0.4/slots-1.csv.gz": "51f5dd3e464ed1e9bf6cd6670394269b282974609c863e5fae9a8c9c479127a6",
+    "docs/evidence/pipeline-v0.4/slots-1.txt": "8cb9b7cbad1d3315175f4fb4766b45ab12d49b5a7de9996790855dbcb0d5fbe0",
+    "docs/evidence/pipeline-v0.4/slots-2.csv.gz": "90e2fe09b61c5c6b5f648fdc98eb7303e001fe4f20a468f7ed4adfd0177ab946",
+    "docs/evidence/pipeline-v0.4/slots-2.txt": "ba4cf14d9690e665f20e58a91d298f5b199c469d37d9139bb862b9f425cf9cc9",
+    "docs/evidence/pipeline-v0.4/slots-4.csv.gz": "0a5c36d38ef34aa6438083c1af02e453892feed0671bd4d723d5aea50244bfdc",
+    "docs/evidence/pipeline-v0.4/slots-4.txt": "7cae6bea637d4fb80019f81b9d8de8f3417997c09a660fc8573782f11351b55c",
+    "docs/pipeline-evidence.md": "ee4c09eefe7e609b801971f19d997e732eb3e005c2645cff79cc4eab237e5b97",
+    "docs/pipeline.md": "496f15493ac3facc1b28569c47d0b31b927f672d5924d4a7aecb14e76a6bfc97",
+    "docs/portability.md": "80d8b13224b9fd2ef013b95a1da96008c4d41421309bd27a1c6ac0627f942b6c",
+    "docs/protocol.md": "350754918072771e965b84c34b81f74ca9e818b263d8198943ee068507470092",
+    "docs/qualcomm_mapping.md": "d946d3d303e464840f74d15cac51a35e69d6148d013ee8814dd3e38204dfde77",
+    "docs/quickstart.md": "52b89918b7527f152dd803f3b4714d95b02d29553f928d9185dde23624afb7ec",
+    "docs/release-notes.md": "8cd699890cad1a6f0b05eec6d6ef1db0001fcecf9180d9ec56b025d2b15d5fbb",
+    "docs/shared-memory.md": "377efe9085bc4cf3450b0b9ce4db1703c98119641cdcb897b5d3b109d3387c12",
+    "include/edgerpc/buffer_pool.hpp": "3a6a4828bbf3d5180399f93ee39af56d94acae6b1ed461bba8f9b3faeb0be0f4",
+    "include/edgerpc/client.hpp": "3b2c6064ada4718d4fff7605162ab2f088763550ef983967aec4170af1738921",
+    "include/edgerpc/executor.hpp": "2c7b5c5f02452603d283a1645f8c1125714c86fc4e41ab36bf16e34fa50a448f",
+    "include/edgerpc/metrics.hpp": "57c67d6f5507d7ae36424a6b244ec6c8dd552ceb365817339d868ed9e4e5281c",
+    "include/edgerpc/mock_executor.hpp": "336035eb579a5d9b12eaa425d626c12eba0c8c75a0eb82cfb6f1c923ffe69c73",
+    "include/edgerpc/protocol.hpp": "d935bbb2112f0d9f2ae98ed918f440815032eccd76b395e9523fc65c10b9e236",
+    "include/edgerpc/server.hpp": "7f951dafee31391fb337739b9af7b1fdff77314f1c284b93b70e5abdc192d468",
+    "include/edgerpc/shared_buffer.hpp": "6ad336366bddcc827f1dacdf17923e61bf347604001212e79f8b7e67dca11164",
+    "include/edgerpc/thread_pool.hpp": "a3294a6f6cfbd78068661435020df49c1694fef0be76917306fac5efa2f1e064",
+    "include/edgerpc/transport.hpp": "54828a49bcf782e6e2ecd7bbd5e4ca7d7d76ff4ff74aef5dd1e98790e7d36f86",
+    "scripts/analyze_pipeline.py": "af3d262386c9bbb23ffd44b872e601bcc2102a9bde233cf7a73c913f67e86d86",
+    "scripts/run_benchmarks.sh": "9cfc6cc412b9080cd5d47ee6f35307710fd8eb1e42765d84f9152e82d7ff0dc7",
+    "scripts/run_comparisons.py": "02795f257c111fa7401bdeb46087a8b2f19dde3ff42c7ceb04c059b00b4602bd",
+    "scripts/run_pipeline_benchmarks.sh": "d69796a94c05a9e437482acc0010bc7f0146f3327fbcdc9b86d92a56d6a7f661",
+    "scripts/run_smoke_test.sh": "b178085eb1bb8cf848bc8117d0df9c9df4a6f5e02516d6ac707c7b2a99a481fe",
+    "scripts/validate_platform.py": "03d7e71c856c3d9634a61e97d574ade7ce0096080e0662e96ae3530d538c4e49",
+    "src/buffer_pool.cpp": "2f4c87f2f066eed810952b4bf2f49142e5c2dc84f3483fb52ef716c255d8075f",
+    "src/client.cpp": "6aea7338ead9afa8ce7e13e038beb404809adb262fd911cbb9f42c17a958428a",
+    "src/metrics.cpp": "c6ecc22fc1bacb5ef8f87d498301894604c2c3ea205519970126d71c32707ade",
+    "src/mock_executor.cpp": "764cc2b8140a0eb70c573a8296256d4b8fd27b056c246c73a7c4e914a9b6049b",
+    "src/protocol.cpp": "0d0be29c932aa2f7120a448418ebc5b7602e9c2848b9d638d4ded71ba4ddf22a",
+    "src/server.cpp": "72e3bef124e2a0a08eb56278f67d0f97dabd626842fb6c1f0c48b1fa8e645698",
+    "src/shared_buffer_posix.cpp": "796efe3b03d8c3c0629d361a578d3f78e37963a741bc0aaf3db8b70aa2c0e730",
+    "src/thread_pool.cpp": "d2b6ebe7ef9f85ca2b346fd8732ca1fad2cb226a7b3d5060b81986550651a11e",
+    "src/transport_unix.cpp": "2affd9ea3a7af7a4dd798ea6a35af5120c553c953e586865bbc31f586cffa397",
+    "tests/test_async.cpp": "a1924f88ed4e193c4ae22ffdd71a39c2caf81ed8b6add92b05af5ed0272167bd",
+    "tests/test_benchmarks.py": "327860b77631a2ef2f9da6cea33d0fa9077c477b105cbfa8a0029365733de6f4",
+    "tests/test_buffer_pool.cpp": "145c5ec63ccc36d78291132dbcb9800cb7b75e980804e71d46d94111d43e99c0",
+    "tests/test_integration.py": "9d68c7f0a4c7d0d21903b1c21b4a4d2eacfc5af7a978fd395d06e322c45f1e0a",
+    "tests/test_protocol.cpp": "77528228b033aa03e6a06bcc59ed7447e6940ee27878c80ee0ea6c7701923431",
+    "tests/test_shared_memory.cpp": "7ddfb280c6c6b6d859a0d056c6c3234205a3785db0935054afbbf7f6aab820f1",
+    "tests/test_stress.py": "65e208d8abfa994383aae02271fb3e01cbda192792661109b0492b73aba79723"
+  },
+  "finished_at": "2026-10-16T21:42:31.189742+00:00",
+  "git_dirty": false,
+  "release_policy": "Prepared notes only; no tag or publication",
+  "note": "Fresh GitHub clone; host dependencies reused, no prior build or Python chart environment. Smoke is functional only; no new comparative performance claims."
+}

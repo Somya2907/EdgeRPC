@@ -102,4 +102,4 @@ There is no authentication, tenant isolation, fair multi-client scheduling, tota
 
 ## Project status
 
-Phases 1–5 are delivered; phase 6 completes documentation and release preparation. [Release notes](docs/release-notes.md) list scope, compatibility, evidence and remaining limits. The selected policy leaves tags and publication for later. [The completion roadmap](docs/completion-plan.md) is the current status source; [the original plan](Plan.md) is retained as a historical design/session guide.
+All six completion phases are delivered, including verified documentation and release preparation. [Release notes](docs/release-notes.md) list scope, compatibility, evidence and remaining limits. The selected policy leaves tags and publication for later. [The completion roadmap](docs/completion-plan.md) is the current status source; [the original plan](Plan.md) is retained as a historical design/session guide.

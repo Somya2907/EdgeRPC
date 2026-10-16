@@ -28,4 +28,4 @@ cmake --build build --parallel 4
 
 The script starts/cleans its own server and reports a unique directory under `results/`. For independent analysis of the retained traces, copy and decompress all three `.csv.gz` files into a temporary directory, then run `python3 scripts/analyze_pipeline.py DIRECTORY`. The analyzer expects one serialized worker. CSV stage definitions and cold/steady-state boundaries are documented in [benchmark methodology](benchmarks.md).
 
-Phase 4 remains open: matched socket/SHM/pool comparisons, at least five trials for published comparisons, variability analysis, socket-byte instrumentation, stage timings beyond pool mode, aggregation, and charts. No release or target-platform performance claim follows from these traces.
+At this phase-3 snapshot, matched transport comparisons, repeated trials, broader instrumentation and charts remained phase-4 work. Those were subsequently completed in [the measured findings](benchmark-results.md), with their own source/host provenance. No release or target-platform performance claim follows from these earlier synthetic traces.

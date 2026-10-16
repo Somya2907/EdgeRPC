@@ -88,7 +88,7 @@ The benchmark measures submission through client decoding/validation or shared-o
 
 ## Remaining milestones
 
-See [the completion roadmap](completion-plan.md) for acceptance criteria and status. Repeated comparisons retain raw samples, failure status, metadata, aggregate tables and exported charts; [findings](benchmark-results.md) describe the tested host and limitations. Native Linux x86_64/ARM64, macOS ARM64 and Linux containers pass the [platform and reliability checks](portability.md); documentation/release acceptance is next. Qualcomm QNN/FastRPC integration requires supported hardware and SDK access; CPU simulator measurements cannot establish NPU behavior.
+See [the completion roadmap](completion-plan.md) for acceptance criteria and status. Repeated comparisons retain raw samples, failure status, metadata, aggregate tables and exported charts; [findings](benchmark-results.md) describe the tested host and limitations. Native Linux x86_64/ARM64, macOS ARM64 and Linux containers pass the [platform and reliability checks](portability.md). Documentation/release preparation is verified in [the fresh-checkout record](evidence/phase6/README.md); tags/publication are deferred by the selected policy. Qualcomm QNN/FastRPC integration requires supported hardware and SDK access; CPU simulator measurements cannot establish NPU behavior.
 
 ## Design decisions and tradeoffs
 

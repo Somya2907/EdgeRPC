@@ -1,0 +1,18 @@
+{
+  "upstream_commit": "a56e9d4de3614a8d8f4b0e15ff561350c4b686e3",
+  "sources": [
+    {
+      "url": "https://github.com/qualcomm/fastrpc/blob/a56e9d4de3614a8d8f4b0e15ff561350c4b686e3/README.md",
+      "sha256": "05ffa7f0a7a25b2494615427808ad76d2faa4fba550ec1c6c73422a7c53c4bc7"
+    },
+    {
+      "url": "https://github.com/qualcomm/fastrpc/blob/a56e9d4de3614a8d8f4b0e15ff561350c4b686e3/inc/remote.h",
+      "sha256": "f9d0690cfd8953697d6fc3163c2be448a7b5b801148808c9b1b360857aeabc44"
+    },
+    {
+      "url": "https://github.com/qualcomm/fastrpc/blob/a56e9d4de3614a8d8f4b0e15ff561350c4b686e3/inc/rpcmem.h",
+      "sha256": "363718de80ebcd7c1180477df0b3d5c005cb63fbec7cf6ff0863c3e7c46323b2"
+    }
+  ],
+  "note": "Inspected public upstream source for conceptual comparison; no SDK installed or hardware execution claimed."
+}
