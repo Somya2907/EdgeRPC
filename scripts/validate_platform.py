@@ -58,6 +58,11 @@ def validate(options):
                 os.killpg(process.pid,signal.SIGKILL)
                 process.wait()
             entry.update(status='failed',error=str(error))
+            if os.environ.get('GITHUB_ACTIONS')=='true':
+                log_path=output/entry['log']
+                detail='\n'.join(log_path.read_text().splitlines()[-60:]) if log_path.exists() else str(error)
+                message=(name+': '+detail)[-7000:]
+                print('::error::'+message.replace('%','%25').replace('\r','%0D').replace('\n','%0A'),flush=True)
             raise
         finally:
             write(output/'validation.json',result)
