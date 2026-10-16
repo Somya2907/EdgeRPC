@@ -2,17 +2,96 @@ name: C++ runtime
 
 on: [push, pull_request]
 
+permissions:
+  contents: read
+
 jobs:
   build-and-test:
+    timeout-minutes: 20
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-24.04
+            system: Linux
+            arch: x86_64
+          - os: ubuntu-24.04-arm
+            system: Linux
+            arch: arm64
+          - os: macos-15
+            system: Darwin
+            arch: arm64
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - name: Record native platform
+        run: |
+          uname -a
+          c++ --version
       - name: Configure
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
       - name: Build
-        run: cmake --build build --parallel 4
-      - name: Test
-        run: ctest --test-dir build --output-on-failure
+        shell: bash
+        run: |
+          set +e
+          cmake --build build --parallel 4 > build.log 2>&1
+          status=$?
+          cat build.log
+          if [ "$status" -ne 0 ]; then
+            python3 - <<'PY'
+          from pathlib import Path
+          for line in Path('build.log').read_text().splitlines():
+              if 'error:' in line.lower() or 'fatal error' in line.lower():
+                  print('::error::'+line.replace('%','%25').replace('\r','%0D'))
+          PY
+          fi
+          exit "$status"
+      - name: Validate tests and real process transports
+        run: python3 scripts/validate_platform.py --output validation --expected-system ${{ matrix.system }} --expected-machine ${{ matrix.arch }}
+      - name: Publish failure summary
+        if: failure()
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+          paths=[Path('build.log'), *Path('validation').glob('*.log')]
+          with open(os.environ['GITHUB_STEP_SUMMARY'],'a') as summary:
+              for path in paths:
+                  if path.exists():
+                      summary.write('### '+str(path)+'\n\n```text\n'+'\n'.join(path.read_text().splitlines()[-100:])+'\n```\n')
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: validation-${{ matrix.os }}
+          path: |
+            validation/
+            build.log
+            build/Testing/Temporary/
+
+  container:
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, ubuntu-24.04-arm]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+      - name: Build native container
+        run: docker build -f docker/Dockerfile -t edgerpc:validation .
+      - name: Run container checks
+        shell: bash
+        run: |
+          trap 'docker rm -f edgerpc-validation >/dev/null 2>&1 || true' EXIT
+          set +e
+          docker run --name edgerpc-validation --shm-size=256m edgerpc:validation
+          status=$?
+          docker cp edgerpc-validation:/tmp/edgerpc-validation validation
+          exit "$status"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: container-${{ matrix.os }}
+          path: validation/
