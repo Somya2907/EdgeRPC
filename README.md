@@ -4,9 +4,11 @@ A C++17 client/server runtime for studying inference RPC across processes. A cli
 
 This is a software prototype inspired by heterogeneous inference communication. It does **not** implement Qualcomm FastRPC, execute on an NPU, or measure CPU–NPU transfers.
 
-## Current milestone: synchronous baseline
+## Current milestone: asynchronous socket runtime
 
 - Reusable `edgerpc` library, server, demo client, and benchmark.
+- Thread-safe `infer_async()` submissions, futures, request-ID matching, and shared sync/async transport.
+- Bounded outstanding client requests and server task queues with explicit overload errors.
 - Versioned binary frames, explicit big-endian integers and float32 values, unique client request IDs, and an 8 MiB tensor limit.
 - Partial read/write and interruption handling, bounded I/O deadlines, disconnect errors, and response validation.
 - Persistent connections, deterministic compute/noop workloads, and optional simulated execution delay.
@@ -14,7 +16,7 @@ This is a software prototype inspired by heterogeneous inference communication. 
 - Correctness and failure tests that run separate server/client processes.
 - Warm-up-separated measurements, per-request CSV, p50/p95/p99, and throughput.
 
-Async submission, bounded worker queues, shared memory, and double buffering are the next milestones in [Plan.md](Plan.md). This baseline serves one connection and one request at a time. Each client instance supports one caller at a time.
+The synchronous baseline and async execution phases are implemented. Shared memory, double buffering, comparative performance reports, and target-platform validation remain in [the completion roadmap](docs/completion-plan.md). The server serves one active client connection at a time and supports multiple outstanding requests within it. Client submissions may come from multiple threads.
 
 ## Build and test
 
@@ -56,11 +58,12 @@ Terminal 2:
 ```sh
 ./build/edgerpc_demo --socket /tmp/edgerpc.sock --mode sync --elements 1024 --verify
 ./build/edgerpc_demo --socket /tmp/edgerpc.sock --workload noop --elements 1024 --verify
+./build/edgerpc_demo --socket /tmp/edgerpc.sock --mode async --requests 32 --elements 1024 --verify
 ```
 
-Expect `status=OK verified=true`. Stop the server with Ctrl-C. All binaries support `--help`; unsupported modes and concurrency settings fail explicitly. Tensor counts from zero through 2,097,152 float32 elements are supported.
+Expect `status=OK verified=true` for every requested result. Stop the server with Ctrl-C. All binaries support `--help`. Tensor counts from zero through 2,097,152 float32 elements are supported. The server defaults to one worker and 32 queued tasks; configure `--queue-capacity` as needed. `--workers 2` through `16` is an optional parallel CPU experiment; it does not model a single serialized accelerator.
 
-For controlled simulated work, start the server with `--delay-us 1000`. Both sides accept `--timeout-ms` (default 5000): this is an I/O deadline per header or payload transfer, not a total inference deadline. A timed-out client closes its connection; work already executing may finish. Create a new client to reconnect. An idle connected peer can delay graceful shutdown until the read deadline.
+For controlled simulated work, start the server with `--delay-us 1000`. Both sides accept `--timeout-ms` (default 5000): this is an I/O deadline per header or payload transfer, not a total inference deadline. A client with no pending work does not run a receive deadline. A silent peer causes pending calls to fail and the connection to close; create a new client to reconnect. `future.wait_for()` does not cancel work. Already-running backend execution may finish after a disconnect. A partial incoming frame can delay graceful shutdown until its read deadline.
 
 The library API:
 
@@ -70,7 +73,13 @@ The library API:
 edgerpc::EdgeRpcClient client("/tmp/edgerpc.sock");
 auto response = client.infer_sync({-1.0f, 0.0f, 2.0f});
 // response.output == {-1.0f, 1.0f, 5.0f}
+auto first = client.infer_async({1.0f, 2.0f});
+auto second = client.infer_async({3.0f, 4.0f});
+auto first_result = first.get();
+auto second_result = second.get();
 ```
+
+Client capacity defaults to 32 **total outstanding calls**, including queued and sent requests; the constructor's third argument changes it (1–1024). A full client returns an already-failed future with `RpcError(Status::Overloaded)`. A full server queue returns the same status for that request. Valid remote errors leave other requests and the connection usable. Protocol errors, I/O failures, `close()`, and destruction settle outstanding futures with exceptions. `close()` is idempotent and joins owned threads. Do not destroy the client while another thread is calling its methods.
 
 ## Benchmark
 
@@ -81,6 +90,9 @@ mkdir -p results
 ./build/edgerpc_benchmark --socket /tmp/edgerpc.sock --mode socket-sync \
   --size-kib 64 --inflight 1 --requests 1000 --warmup 100 \
   --workload compute --csv results/baseline.csv
+./build/edgerpc_benchmark --socket /tmp/edgerpc.sock --mode socket-async \
+  --size-kib 64 --inflight 16 --requests 1000 --warmup 100 \
+  --workload compute --csv results/async.csv
 ```
 
 Or let the script start and clean up its own server, use a private temporary socket, and save system/build metadata:
@@ -90,19 +102,19 @@ Or let the script start and clean up its own server, use a private temporary soc
 REQUESTS=5000 WARMUP=200 SIZES_KIB="4 64 1024 8192" ./scripts/run_benchmarks.sh
 ```
 
-Results go in a unique directory under ignored `results/`. Run repeated trials before interpreting performance. [Benchmark methodology](docs/benchmarks.md) explains timer boundaries and limitations. No optimization or NPU speedup is claimed by this initial baseline.
+The script currently runs the synchronous baseline; the benchmark binary supports both socket modes. Results go in a unique directory under ignored `results/`. Run repeated trials before interpreting performance. Compare both modes at `--inflight 1` to isolate API overhead; a single sync caller versus 16 async calls is a concurrency experiment. [Benchmark methodology](docs/benchmarks.md) explains timer boundaries and limitations. No optimization or NPU speedup is assumed.
 
 ## Reliability and architecture
 
 ```text
 Client process                             Server process
-EdgeRpcClient -> encode -> Unix socket -> validate -> MockExecutor
-              <- decode <- Unix socket <- encode  <- 2*x+1 / noop
+API -> bounded submissions -> sender -> Unix socket -> bounded execution queue
+future <- ID matching <- receiver <- Unix socket <- worker(s): 2*x+1 / noop
 ```
 
 See [the wire protocol](docs/protocol.md) and [architecture and next steps](docs/architecture.md).
 
-CTest includes nine C++ test groups and 17 Python integration tests, covering byte order, fragmented frames, large partial writes, zero/max tensors, malformed frames, invalid operations, disconnects, deadlines, response mismatches, restart, and CSV warm-up exclusion. Checks remain active in Release builds.
+CTest includes nine protocol/backend/metrics groups, 13 async/concurrency groups, and 22 Python integration tests. They cover framing and tensor boundaries, reversed responses, concurrent callers, close/submission races, queue bounds, overload recovery, disconnects, deadlines, restart, and benchmark warm-up exclusion. Checks remain active in Release builds.
 
 For a sanitizer build:
 
@@ -112,6 +124,6 @@ cmake --build build-sanitize --parallel 4
 ctest --test-dir build-sanitize --output-on-failure
 ```
 
-This is a **same-user, trusted-client local demo**. Socket permissions are 0600; use a private directory for concurrent runs. One client can occupy the serial server until it disconnects or its read deadline expires. There is no authentication, application work queue, cancellation, or multi-tenant isolation. A killed process may leave a socket path; the next server reclaims it only after a refused connection probe. Existing files, symlinks, and active sockets are preserved.
+This is a **same-user, trusted-client local demo**. Socket permissions are 0600; use a private directory for concurrent runs. One client can occupy the server until it disconnects or becomes idle with no work outstanding. Queue limits bound request counts; choose lower capacities for large tensors (32 × 8 MiB is 256 MiB of queued tensor data before transient copies). There is no authentication, per-request cancellation, fair multi-client scheduling, or multi-tenant isolation. A killed process may leave a socket path; the next server reclaims it only after a refused connection probe. Existing files, symlinks, and active sockets are preserved.
 
 The current version is validated on Linux x86_64. CI is configured for Linux and macOS; macOS/Apple Silicon behavior still needs a run on that platform. Docker/ARM64 and hardware backends remain future work.
