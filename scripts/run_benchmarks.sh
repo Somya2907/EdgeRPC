@@ -56,7 +56,7 @@ if cache.exists():
     metadata["cmake_settings"] = [line for line in cache.read_text().splitlines()
                                  if line.startswith(("CMAKE_BUILD_TYPE:", "CMAKE_CXX_COMPILER:",
                                                      "CMAKE_CXX_FLAGS:", "CMAKE_CXX_FLAGS_RELEASE:",
-                                                     "EDGERPC_SANITIZERS:"))]
+                                                     "EDGERPC_SANITIZERS:", "EDGERPC_THREAD_SANITIZER:"))]
 Path(sys.argv[1]).write_text(json.dumps(metadata, indent=2) + "\n")
 PY
 

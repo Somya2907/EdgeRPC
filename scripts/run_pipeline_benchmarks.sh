@@ -48,7 +48,8 @@ metadata = {
     "note": "One trial per slot count; synthetic CPU preparation/execution, not hardware or a repeated performance study.",
     "cmake_settings": [line for line in (build / "CMakeCache.txt").read_text().splitlines()
                        if line.startswith(("CMAKE_BUILD_TYPE:", "CMAKE_CXX_COMPILER:", "CMAKE_CXX_FLAGS:",
-                                           "CMAKE_CXX_FLAGS_RELEASE:", "EDGERPC_SANITIZERS:"))],
+                                           "CMAKE_CXX_FLAGS_RELEASE:", "EDGERPC_SANITIZERS:",
+                                           "EDGERPC_THREAD_SANITIZER:"))],
 }
 Path(sys.argv[1]).write_text(json.dumps(metadata, indent=2) + "\n")
 PY

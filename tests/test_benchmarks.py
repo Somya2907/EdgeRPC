@@ -12,10 +12,23 @@ ROOT=Path(__file__).resolve().parents[1]
 sys.path.insert(0,str(ROOT/"benchmarks"))
 from report import aggregate, report
 sys.path.insert(0,str(ROOT/"scripts"))
-from run_comparisons import benchmark_command, configurations
+from run_comparisons import benchmark_command, configurations, require_release
 
 
 class BenchmarkAnalysis(unittest.TestCase):
+    def test_comparisons_reject_sanitized_or_unconfirmed_builds(self):
+        settings=["CMAKE_BUILD_TYPE:STRING=Release", "EDGERPC_SANITIZERS:BOOL=OFF",
+                  "EDGERPC_THREAD_SANITIZER:BOOL=OFF"]
+        require_release('\n'.join(settings))
+        for index, replacement in ((0,"CMAKE_BUILD_TYPE:STRING=Debug"),
+                                   (1,"EDGERPC_SANITIZERS:BOOL=ON"),
+                                   (2,"EDGERPC_THREAD_SANITIZER:BOOL=ON"), (2,"")):
+            with self.subTest(replacement=replacement):
+                changed=list(settings)
+                changed[index]=replacement
+                with self.assertRaisesRegex(ValueError,'sanitizers OFF'):
+                    require_release('\n'.join(changed))
+
     def setUp(self):
         self.temporary=tempfile.TemporaryDirectory(prefix="erpc-report-",dir="/tmp")
         self.addCleanup(self.temporary.cleanup)

@@ -27,6 +27,13 @@ def save(path, value):
     temporary.replace(path)
 
 
+def require_release(cache):
+    settings=set(cache.splitlines())
+    if not {"CMAKE_BUILD_TYPE:STRING=Release", "EDGERPC_SANITIZERS:BOOL=OFF",
+            "EDGERPC_THREAD_SANITIZER:BOOL=OFF"}.issubset(settings):
+        raise ValueError("comparisons require a Release build with address/undefined and thread sanitizers OFF")
+
+
 def configurations(options):
     result=[]
     for size in options.sizes_kib:
@@ -99,8 +106,7 @@ def run(options):
         raise RuntimeError("charts require: python3 -m pip install -r benchmarks/requirements.txt (or use --no-plots)")
     build=options.build_dir.resolve()
     cache=(build/"CMakeCache.txt").read_text()
-    if "CMAKE_BUILD_TYPE:STRING=Release" not in cache or "EDGERPC_SANITIZERS:BOOL=OFF" not in cache:
-        raise ValueError("comparisons require a Release build with sanitizers OFF")
+    require_release(cache)
     output=options.output or ROOT/"results"/("comparison-"+datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")+f"-{os.getpid()}")
     output=output.resolve()
     output.mkdir(parents=True,exist_ok=False)
@@ -109,8 +115,9 @@ def run(options):
                   logical_cpus=os.cpu_count(),cpu_affinity=sorted(os.sched_getaffinity(0)) if hasattr(os,"sched_getaffinity") else None,
                   build_dir=str(build),trials=options.trials,requests=options.requests,warmup=options.warmup,seed=options.seed,
                   configurations=configs,cmake_settings=[line for line in cache.splitlines() if line.startswith(
-                      ("CMAKE_BUILD_TYPE:","CMAKE_CXX_COMPILER:","CMAKE_CXX_FLAGS:","CMAKE_CXX_FLAGS_RELEASE:","EDGERPC_SANITIZERS:"))],
-                  note="CPU simulator in shared cloud; randomized sequential trials; no NPU/Mac/ARM64 results.")
+                      ("CMAKE_BUILD_TYPE:","CMAKE_CXX_COMPILER:","CMAKE_CXX_FLAGS:","CMAKE_CXX_FLAGS_RELEASE:",
+                       "EDGERPC_SANITIZERS:","EDGERPC_THREAD_SANITIZER:"))],
+                  note="CPU simulator on the recorded host; randomized sequential trials; no NPU results.")
     if not options.no_plots:
         metadata["matplotlib_version"]=importlib.metadata.version("matplotlib")
     metadata["cpu_model"]=platform.processor()
