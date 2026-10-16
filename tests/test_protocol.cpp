@@ -238,6 +238,7 @@ int main() {
         {"measured socket traffic", measured_socket_traffic}};
     std::size_t failures = 0;
     for (const auto& item : cases) {
+        std::cout << "RUN " << item.first << std::endl;
         try { item.second(); std::cout << "PASS " << item.first << '\n'; }
         catch (const std::exception& error) {
             ++failures;

@@ -7,6 +7,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import signal
 import subprocess
 import tempfile
@@ -63,6 +64,16 @@ def validate(options):
                 detail='\n'.join(log_path.read_text().splitlines()[-60:]) if log_path.exists() else str(error)
                 message=(name+': '+detail)[-7000:]
                 print('::error::'+message.replace('%','%25').replace('\r','%0D').replace('\n','%0A'),flush=True)
+                failed=build/'Testing/Temporary/LastTestsFailed.log'
+                transcript=build/'Testing/Temporary/LastTest.log'
+                if name=='ctest' and failed.exists() and transcript.exists():
+                    blocks=re.split(r'(?m)^\d+/\d+ Testing: ',transcript.read_text())
+                    names={line.split(':',1)[1] for line in failed.read_text().splitlines() if ':' in line}
+                    for block in blocks[1:]:
+                        test=block.splitlines()[0].strip()
+                        if test in names:
+                            message=test+': '+block[-5000:]
+                            print('::error::'+message.replace('%','%25').replace('\r','%0D').replace('\n','%0A'),flush=True)
             raise
         finally:
             write(output/'validation.json',result)

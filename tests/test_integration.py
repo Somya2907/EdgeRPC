@@ -12,6 +12,7 @@ from pathlib import Path
 import socket
 import secrets
 import struct
+import sys
 import subprocess
 import tempfile
 import threading
@@ -31,7 +32,11 @@ BIN = None
 class SharedRegion:
     """Independent POSIX mapping; no multiprocessing resource tracker or C++ helpers."""
     libc = ctypes.CDLL(None, use_errno=True)
-    libc.shm_open.argtypes = [ctypes.c_char_p, ctypes.c_int, ctypes.c_uint]
+    # Darwin's third argument is variadic. Apple Silicon passes variadic values
+    # on the stack, so declaring all three fixed silently corrupts creation mode.
+    libc.shm_open.argtypes = [ctypes.c_char_p, ctypes.c_int]
+    if sys.platform != 'darwin':
+        libc.shm_open.argtypes.append(ctypes.c_uint)
     libc.shm_open.restype = ctypes.c_int
     libc.shm_unlink.argtypes = [ctypes.c_char_p]
     libc.shm_unlink.restype = ctypes.c_int
@@ -42,12 +47,14 @@ class SharedRegion:
         self.mapping = None
         previous_mask = os.umask(0)  # This test helper runs without other local threads.
         try:
-            fd = self.libc.shm_open(self.name.encode(), os.O_RDWR | os.O_CREAT | os.O_EXCL, mode)
+            fd = self.libc.shm_open(self.name.encode(), os.O_RDWR | os.O_CREAT | os.O_EXCL, ctypes.c_uint(mode))
         finally:
             os.umask(previous_mask)
         if fd < 0:
             raise OSError(ctypes.get_errno(), "test shm_open failed")
         try:
+            if os.fstat(fd).st_mode & 0o777 != mode:
+                raise RuntimeError('test shm_open creation mode mismatch; check the native calling convention')
             os.ftruncate(fd, size)
             self.size = os.fstat(fd).st_size  # macOS reports a page-rounded size.
             self.mapping = mmap.mmap(fd, self.size)
